@@ -1,0 +1,66 @@
+{
+  "name": "video-workbench",
+  "productName": "视频工作台",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "concurrently -k \"vite\" \"wait-on tcp:5199 && cross-env VITE_DEV=1 electron .\"",
+    "build": "tsc --noEmit && vite build",
+    "start": "electron .",
+    "dist:win": "npm run build && electron-builder --win dir --x64"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "lucide-react": "^1.77.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.7.0",
+    "concurrently": "^10.0.7",
+    "cross-env": "^10.1.0",
+    "electron": "^45.4.1",
+    "electron-builder": "^26.18.0",
+    "typescript": "^7.0.2",
+    "vite": "^5.4.21",
+    "wait-on": "^9.5.1"
+  },
+  "description": "视频工作台：字幕烧录、AI 配音、音频提取、转文字",
+  "author": "video-workbench",
+  "build": {
+    "appId": "com.videoworkbench.app",
+    "productName": "视频工作台",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "shared/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "win-resources/bin",
+        "to": "bin"
+      },
+      {
+        "from": "win-resources/models",
+        "to": "models"
+      },
+      {
+        "from": "win-resources/fonts",
+        "to": "fonts"
+      }
+    ],
+    "npmRebuild": false,
+    "win": {
+      "executableName": "VideoWorkbench",
+      "signAndEditExecutable": false
+    }
+  }
+}

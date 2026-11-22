@@ -1,0 +1,108 @@
+# 在 GitHub 的 Windows 云电脑上打包「视频工作台」Windows 版，并在真机上跑一遍自检，产出可以直接发给别人的 ZIP。
+name: Windows 打包
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  WHISPER_TAG: b5907
+  WHISPER_MODEL: ggml-large-v3-turbo-q5_0.bin
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 安装依赖
+        run: npm ci --registry=https://registry.npmjs.org --replace-registry-host=always
+
+      - name: 缓存识别模型
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: app/win-resources/models
+          key: whisper-model-${{ env.WHISPER_MODEL }}
+
+      - name: 下载识别模型
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        run: |
+          New-Item -ItemType Directory -Force win-resources/models | Out-Null
+          curl.exe -L --fail --retry 3 -o "win-resources/models/$env:WHISPER_MODEL" "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$env:WHISPER_MODEL"
+
+      - name: 下载 ffmpeg、whisper、字体
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force win-resources/bin, win-resources/fonts, $env:RUNNER_TEMP/dl | Out-Null
+          $dl = "$env:RUNNER_TEMP/dl"
+
+          # ffmpeg（gyan.dev 正式版 essentials：含 libass、x264、mp3lame、NVENC/QSV/AMF）
+          curl.exe -L --fail --retry 3 -o "$dl/ffmpeg.zip" "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+          Expand-Archive "$dl/ffmpeg.zip" "$dl/ffmpeg"
+          Get-ChildItem "$dl/ffmpeg" -Recurse -Include ffmpeg.exe, ffprobe.exe | Copy-Item -Destination win-resources/bin
+
+          # whisper.cpp（OpenBLAS 版，CPU 上更快）
+          curl.exe -L --fail --retry 3 -o "$dl/whisper.zip" "https://github.com/ggml-org/whisper.cpp/releases/download/$env:WHISPER_TAG/whisper-blas-bin-x64.zip"
+          Expand-Archive "$dl/whisper.zip" "$dl/whisper"
+          $cli = Get-ChildItem "$dl/whisper" -Recurse -Filter whisper-cli.exe | Select-Object -First 1
+          Get-ChildItem $cli.DirectoryName -Include *.exe, *.dll -File -Recurse | Where-Object { $_.DirectoryName -eq $cli.DirectoryName } | Copy-Item -Destination win-resources/bin
+
+          # 思源黑体（Noto Sans SC，SIL OFL 开源字体），字幕默认字体
+          foreach ($w in 'Regular', 'Bold') {
+            curl.exe -L --fail --retry 3 -o "win-resources/fonts/NotoSansSC-$w.otf" "https://github.com/notofonts/noto-cjk/raw/main/Sans/SubsetOTF/SC/NotoSansSC-$w.otf"
+          }
+          curl.exe -L --fail --retry 3 -o "win-resources/fonts/OFL.txt" "https://github.com/notofonts/noto-cjk/raw/main/Sans/LICENSE"
+
+          Get-ChildItem win-resources -Recurse | Select-Object FullName, Length | Format-Table -AutoSize
+          & win-resources/bin/ffmpeg.exe -hide_banner -version | Select-Object -First 1
+          & win-resources/bin/whisper-cli.exe --help 2>&1 | Select-Object -First 3
+
+      - name: 构建并打包
+        run: npm run dist:win
+
+      - name: 真机自检
+        run: |
+          $out = "$env:RUNNER_TEMP/selftest"
+          $exe = Resolve-Path release/win-unpacked/VideoWorkbench.exe
+          $p = Start-Process -FilePath $exe -ArgumentList '--self-test', "`"$out`"", '--sample', "`"$(Resolve-Path ci/sample_zh.mp3)`"" -PassThru -Wait
+          Get-Content "$out/selftest.json" -Encoding utf8
+          if ($p.ExitCode -ne 0) { throw "自检失败，退出码 $($p.ExitCode)" }
+
+      - name: 上传自检结果
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selftest
+          path: |
+            ${{ runner.temp }}/selftest/selftest.json
+            ${{ runner.temp }}/selftest/*.png
+          if-no-files-found: warn
+
+      - name: 压缩成 ZIP
+        run: |
+          $ver = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $name = "VideoWorkbench-Windows-x64-v$ver"
+          Rename-Item release/win-unpacked $name
+          Copy-Item ci/ReadMe.txt release/$name/
+          7z a -tzip -mx=5 "release/$name.zip" "./release/$name"
+          "ZIP_NAME=$name" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Get-Item "release/$name.zip" | Select-Object Name, Length
+
+      - name: 上传 ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ZIP_NAME }}
+          path: app/release/${{ env.ZIP_NAME }}.zip
+          compression-level: 0
+          retention-days: 30

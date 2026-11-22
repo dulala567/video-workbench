@@ -1,0 +1,460 @@
+{
+ "styles": [
+  {
+   "id": "classic",
+   "name": "经典白字黑边",
+   "group": "预设",
+   "font": "Hiragino Sans GB",
+   "size": 64,
+   "bold": true,
+   "color": "#FFFFFF",
+   "outline": {
+    "color": "#000000",
+    "width": 3
+   },
+   "outline2": {
+    "color": "#FFFFFF",
+    "width": 0
+   },
+   "shadow": {
+    "color": "#000000",
+    "depth": 0
+   },
+   "box": null,
+   "y": 0.72
+  },
+  {
+   "id": "yellow",
+   "name": "短视频黄字",
+   "group": "预设",
+   "font": "Hiragino Sans GB",
+   "size": 64,
+   "bold": true,
+   "color": "#FFE135",
+   "outline": {
+    "color": "#000000",
+    "width": 4
+   },
+   "outline2": {
+    "color": "#FFFFFF",
+    "width": 0
+   },
+   "shadow": {
+    "color": "#000000",
+    "depth": 2
+   },
+   "box": null,
+   "y": 0.72
+  },
+  {
+   "id": "box",
+   "name": "半透明底框",
+   "group": "预设",
+   "font": "Hiragino Sans GB",
+   "size": 64,
+   "bold": true,
+   "color": "#FFFFFF",
+   "outline": {
+    "color": "#000000",
+    "width": 0
+   },
+   "outline2": {
+    "color": "#FFFFFF",
+    "width": 0
+   },
+   "shadow": {
+    "color": "#000000",
+    "depth": 0
+   },
+   "box": {
+    "color": "#000000",
+    "opacity": 0.55,
+    "padding": 12
+   },
+   "y": 0.72
+  },
+  {
+   "id": "red",
+   "name": "爆款红",
+   "group": "花字",
+   "font": "Hiragino Sans GB",
+   "size": 64,
+   "bold": true,
+   "color": "#FFFFFF",
+   "outline": {
+    "color": "#E8222B",
+    "width": 5
+   },
+   "outline2": {
+    "color": "#FFFFFF",
+    "width": 3
+   },
+   "shadow": {
+    "color": "#000000",
+    "depth": 0
+   },
+   "box": null,
+   "y": 0.72
+  },
+  {
+   "id": "blue",
+   "name": "活力蓝",
+   "group": "花字",
+   "font": "Hiragino Sans GB",
+   "size": 64,
+   "bold": true,
+   "color": "#FFFFFF",
+   "outline": {
+    "color": "#1E6BFF",
+    "width": 5
+   },
+   "outline2": {
+    "color": "#FFFFFF",
+    "width": 3
+   },
+   "shadow": {
+    "color": "#000000",
+    "depth": 0
+   },
+   "box": null,
+   "y": 0.72
+  },
+  {
+   "id": "orange",
+   "name": "暖橙",
+   "group": "花字",
+   "font": "Hiragino Sans GB",
+   "size": 64,
+   "bold": true,
+   "color": "#FFFFFF",
+   "outline": {
+    "color": "#FF7A00",
+    "width": 5
+   },
+   "outline2": {
+    "color": "#FFFFFF",
+    "width": 2
+   },
+   "shadow": {
+    "color": "#000000",
+    "depth": 0
+   },
+   "box": null,
+   "y": 0.72
+  },
+  {
+   "id": "green",
+   "name": "清新绿",
+   "group": "花字",
+   "font": "Hiragino Sans GB",
+   "size": 64,
+   "bold": true,
+   "color": "#FFFFFF",
+   "outline": {
+    "color": "#18B35A",
+    "width": 5
+   },
+   "outline2": {
+    "color": "#FFFFFF",
+    "width": 2
+   },
+   "shadow": {
+    "color": "#000000",
+    "depth": 0
+   },
+   "box": null,
+   "y": 0.72
+  },
+  {
+   "id": "purple",
+   "name": "梦幻紫",
+   "group": "花字",
+   "font": "Hiragino Sans GB",
+   "size": 64,
+   "bold": true,
+   "color": "#FFFFFF",
+   "outline": {
+    "color": "#8A4DFF",
+    "width": 5
+   },
+   "outline2": {
+    "color": "#FFFFFF",
+    "width": 3
+   },
+   "shadow": {
+    "color": "#000000",
+    "depth": 0
+   },
+   "box": null,
+   "y": 0.72
+  },
+  {
+   "id": "variety",
+   "name": "综艺黄黑",
+   "group": "花字",
+   "font": "Hiragino Sans GB",
+   "size": 64,
+   "bold": true,
+   "color": "#FFE600",
+   "outline": {
+    "color": "#1A1A1A",
+    "width": 5
+   },
+   "outline2": {
+    "color": "#FFFFFF",
+    "width": 3
+   },
+   "shadow": {
+    "color": "#000000",
+    "depth": 0
+   },
+   "box": null,
+   "y": 0.72
+  },
+  {
+   "id": "candy",
+   "name": "圆体糖果粉",
+   "group": "花字",
+   "font": "Yuanti SC",
+   "size": 64,
+   "bold": true,
+   "color": "#FFFFFF",
+   "outline": {
+    "color": "#FF5FA2",
+    "width": 5
+   },
+   "outline2": {
+    "color": "#FFFFFF",
+    "width": 2
+   },
+   "shadow": {
+    "color": "#000000",
+    "depth": 0
+   },
+   "box": null,
+   "y": 0.72
+  },
+  {
+   "id": "black-box",
+   "name": "黑底白字",
+   "group": "花字",
+   "font": "Hiragino Sans GB",
+   "size": 64,
+   "bold": true,
+   "color": "#FFFFFF",
+   "outline": {
+    "color": "#000000",
+    "width": 0
+   },
+   "outline2": {
+    "color": "#FFFFFF",
+    "width": 0
+   },
+   "shadow": {
+    "color": "#000000",
+    "depth": 0
+   },
+   "box": {
+    "color": "#000000",
+    "opacity": 0.85,
+    "padding": 14
+   },
+   "y": 0.72
+  },
+  {
+   "id": "white-box",
+   "name": "白底黑字",
+   "group": "花字",
+   "font": "Hiragino Sans GB",
+   "size": 64,
+   "bold": true,
+   "color": "#111111",
+   "outline": {
+    "color": "#000000",
+    "width": 0
+   },
+   "outline2": {
+    "color": "#FFFFFF",
+    "width": 0
+   },
+   "shadow": {
+    "color": "#000000",
+    "depth": 0
+   },
+   "box": {
+    "color": "#FFFFFF",
+    "opacity": 0.92,
+    "padding": 14
+   },
+   "y": 0.72
+  },
+  {
+   "id": "hand",
+   "name": "手写体",
+   "group": "花字",
+   "font": "HanziPen SC",
+   "size": 64,
+   "bold": false,
+   "color": "#FFFFFF",
+   "outline": {
+    "color": "#333333",
+    "width": 3
+   },
+   "outline2": {
+    "color": "#FFFFFF",
+    "width": 0
+   },
+   "shadow": {
+    "color": "#000000",
+    "depth": 0
+   },
+   "box": null,
+   "y": 0.72
+  },
+  {
+   "id": "weibei",
+   "name": "魏碑古风",
+   "group": "花字",
+   "font": "Weibei SC",
+   "size": 64,
+   "bold": false,
+   "color": "#F5E6C8",
+   "outline": {
+    "color": "#5A3A1A",
+    "width": 4
+   },
+   "outline2": {
+    "color": "#FFFFFF",
+    "width": 0
+   },
+   "shadow": {
+    "color": "#000000",
+    "depth": 2
+   },
+   "box": null,
+   "y": 0.72
+  },
+  {
+   "id": "gold",
+   "name": "行楷金字",
+   "group": "花字",
+   "font": "Xingkai SC",
+   "size": 64,
+   "bold": false,
+   "color": "#FFD86B",
+   "outline": {
+    "color": "#4A2A00",
+    "width": 4
+   },
+   "outline2": {
+    "color": "#FFFFFF",
+    "width": 0
+   },
+   "shadow": {
+    "color": "#000000",
+    "depth": 3
+   },
+   "box": null,
+   "y": 0.72
+  },
+  {
+   "id": "cute",
+   "name": "娃娃体可爱",
+   "group": "花字",
+   "font": "Wawati SC",
+   "size": 64,
+   "bold": false,
+   "color": "#FFFFFF",
+   "outline": {
+    "color": "#FF8FB1",
+    "width": 4
+   },
+   "outline2": {
+    "color": "#FFFFFF",
+    "width": 2
+   },
+   "shadow": {
+    "color": "#000000",
+    "depth": 0
+   },
+   "box": null,
+   "y": 0.72
+  }
+ ],
+ "fonts": [
+  {
+   "label": "冬青黑体",
+   "family": "Hiragino Sans GB"
+  },
+  {
+   "label": "黑体",
+   "family": "Heiti SC"
+  },
+  {
+   "label": "兰亭黑",
+   "family": "Lantinghei SC"
+  },
+  {
+   "label": "圆体",
+   "family": "Yuanti SC"
+  },
+  {
+   "label": "娃娃体",
+   "family": "Wawati SC"
+  },
+  {
+   "label": "翩翩体",
+   "family": "HanziPen SC"
+  },
+  {
+   "label": "手札体",
+   "family": "Hannotate SC"
+  },
+  {
+   "label": "魏碑",
+   "family": "Weibei SC"
+  },
+  {
+   "label": "行楷",
+   "family": "Xingkai SC"
+  },
+  {
+   "label": "报隶",
+   "family": "Baoli SC"
+  },
+  {
+   "label": "楷体",
+   "family": "Kaiti SC"
+  },
+  {
+   "label": "宋体",
+   "family": "Songti SC"
+  }
+ ],
+ "filters": [
+  {
+   "label": "鲜艳",
+   "filter": "eq=saturation=1.25:contrast=1.05"
+  },
+  {
+   "label": "暖色",
+   "filter": "colorbalance=rs=0.08:gs=0.02:bs=-0.08"
+  },
+  {
+   "label": "冷色",
+   "filter": "colorbalance=rs=-0.06:bs=0.08"
+  },
+  {
+   "label": "复古",
+   "filter": "curves=preset=vintage"
+  },
+  {
+   "label": "亮白",
+   "filter": "eq=brightness=0.04:contrast=1.08"
+  },
+  {
+   "label": "黑白",
+   "filter": "hue=s=0"
+  }
+ ]
+}

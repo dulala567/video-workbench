@@ -1,0 +1,14 @@
+engines/.venv/
+engines/MuseTalk/
+engines/RobustVideoMatting/
+engines/whisper/
+engines/*.log
+app/node_modules/
+app/dist/
+testdata/
+app/release/
+app/win-resources/
+.DS_Store
+发布包/
+__pycache__/
+*.pyc
