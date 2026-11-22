@@ -128,6 +128,8 @@ async function handler(job, ctx) {
         HF_HUB_OFFLINE: '1',
         TRANSFORMERS_OFFLINE: '1',
         ...(paths.torchHome ? { TORCH_HOME: paths.torchHome } : {}),
+        // Windows 上没有 C++ 编译器，torch.compile 一律不用
+        ...(process.platform === 'win32' ? { TORCHDYNAMO_DISABLE: '1' } : {}),
       },
       onStdout: (t) => {
         buf += t;

@@ -75,6 +75,10 @@ def pick_device():
 VIDEO_ENC = ["-c:v", "h264_videotoolbox", "-q:v", "70"] if sys.platform == "darwin" else ["-c:v", "libx264", "-preset", "veryfast", "-crf", "16"]
 
 
+# face-alignment 默认用 torch.compile 加速，Windows 上要装微软 C++ 编译器才行，直接关掉
+FA_COMPILE = sys.platform != "win32"
+
+
 def ffmpeg_bin():
     for p in ["/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg", "/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"]:
         if os.path.exists(p):
@@ -168,10 +172,10 @@ def prepare_avatar(src, cache, bbox_shift, device, vae, fp):
 
     fa_device = "mps" if device.type == "mps" else ("cuda" if device.type == "cuda" else "cpu")
     try:
-        fa = face_alignment.FaceAlignment(face_alignment.LandmarksType.TWO_D, flip_input=False, device=fa_device)
+        fa = face_alignment.FaceAlignment(face_alignment.LandmarksType.TWO_D, flip_input=False, device=fa_device, compile=FA_COMPILE)
     except Exception as e:
         log("face-alignment 用", fa_device, "失败，改用 CPU：", e)
-        fa = face_alignment.FaceAlignment(face_alignment.LandmarksType.TWO_D, flip_input=False, device="cpu")
+        fa = face_alignment.FaceAlignment(face_alignment.LandmarksType.TWO_D, flip_input=False, device="cpu", compile=FA_COMPILE)
 
     coords, latents, mask_coords = [], [], []
     mask_dir = os.path.join(cache, "masks")

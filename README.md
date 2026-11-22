@@ -33,7 +33,9 @@ cd app && npm run dev
 GitHub 私有仓库 `dulala567/video-workbench` 的 Actions（`.github/workflows/windows.yml`）在 Windows 云电脑上打包：推送到 main 或在 Actions 页手动运行都会出一个 ZIP（Actions 运行页的 Artifacts 里下载，保留 30 天）。
 
 - 打包时下载 Windows 版 ffmpeg（gyan.dev essentials）、whisper.cpp（`b5907` 的 OpenBLAS 版）、识别模型 `ggml-large-v3-turbo-q5_0.bin`（574MB）、思源黑体（Noto Sans SC，OFL 开源），放进安装包的 `resources/bin|models|fonts`。
-- **不带数字人**（要 NVIDIA 显卡 + CUDA PyTorch + 约 4GB 模型，做不到解压即用），界面里相关入口都隐藏。
+- **带数字人**：打包时用 uv 装一份可搬动的 Python 3.11（python-build-standalone），装显卡版 PyTorch（`torch==2.8.0`，CUDA 12.8，含 CUDA 运行库，用户只需 NVIDIA 驱动）和 MuseTalk 依赖，删掉运行用不到的 `torch/include` 和 `.lib`；MuseTalk、RobustVideoMatting 代码固定到和 Mac 相同的提交；模型（MuseTalk 1.5、sd-vae、whisper-tiny、face-parse、人脸检测 s3fd/2DFAN4、RVM）下载后校验 SHA256，放进 `resources/engines`。人脸检测模型通过 `TORCH_HOME` 指到包内，运行时不联网。
+- 数字人在 NVIDIA 显卡上跑；没有 NVIDIA 显卡会退回 CPU（非常慢），界面顶部状态点和「设置 → 检测环境」会提示。显卡检测用 `nvidia-smi`。
+- 口型脚本的 Windows 适配：中间文件用 libx264 编码（Mac 用 VideoToolbox）；OpenCV 的 `imread/imwrite` 不认中文路径，换成读字节后解码；背景视频改用 ffmpeg 管道解码（`cv2.VideoCapture` 同样不认中文路径）。
 - 字幕字体：Mac 字体在 Windows 上换成宋体/楷体/黑体或自带的思源黑体；字幕滤镜在临时目录里用相对路径，字体目录参数转义盘符冒号。
 - 硬件编码：Windows 依次试 NVENC / QSV / AMF（真编一小段成功才用），否则 x264。
 - 自检：`VideoWorkbench.exe --self-test <目录> --sample <中文语音>`，打包流程里在真机跑一遍（生成视频、两种样式烧录中文字幕、三种音频提取、中文识别、界面加载），结果和截图在 Artifacts 的 `selftest` 里。
