@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Mic, Play, Square as StopIcon, KeyRound, Wand2, FolderOpen, X, RotateCcw, Search, UserRound, Send, ImagePlus, FileAudio, Plus, Sparkles } from 'lucide-react';
 import voicesJson from '../../shared/doubao-voices.json';
-import { api, useJobs, useSettings, fileName, mediaUrl, fmtDur, IS_WIN } from '../api';
+import { api, useJobs, useSettings, fileName, mediaUrl, fmtDur } from '../api';
 import { Seg, StatusBadge, Progress, toast, useCounts } from '../components/ui';
 
 interface Voice {
@@ -307,7 +307,7 @@ export default function Tts({ go }: { go: (p: string) => void }) {
               生成中 {c.running} · 排队 {c.pending} · 完成 {c.done} · 失败 {c.failed}
             </span>
             <span className="grow" />
-            {done.length > 0 && !IS_WIN && (
+            {done.length > 0 && (
               <button className="btn sm primary" onClick={() => toLipsync(done.map((j) => j.output.file))}>
                 <UserRound size={12} /> 全部拿去做数字人
               </button>
@@ -359,11 +359,9 @@ export default function Tts({ go }: { go: (p: string) => void }) {
                             <button className="btn ghost sm" title="播放" onClick={() => play(j.output.file, j.id)}>
                               {playing === j.id ? <StopIcon size={13} /> : <Play size={13} />}
                             </button>
-                            {!IS_WIN && (
-<button className="btn ghost sm" title="拿去做数字人" onClick={() => toLipsync([j.output.file])}>
+                            <button className="btn ghost sm" title="拿去做数字人" onClick={() => toLipsync([j.output.file])}>
                               <Send size={13} />
                             </button>
-)}
                             <button className="btn ghost sm" title="在访达中显示" onClick={() => api.shell.show(j.output.file)}>
                               <FolderOpen size={13} />
                             </button>

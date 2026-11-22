@@ -17,6 +17,21 @@ function status() {
   return { ready: python && weights && runner, python, weights, runner };
 }
 
+// 显卡：数字人在 NVIDIA 显卡上跑得动，没有就退回 CPU（非常慢）。Mac 用自带的 Apple 显卡，不用查。
+let gpuCache;
+function detectGpu() {
+  if (process.platform !== 'win32') return Promise.resolve(null);
+  if (gpuCache) return gpuCache;
+  gpuCache = new Promise((resolve) => {
+    require('child_process').execFile('nvidia-smi', ['--query-gpu=name,memory.total', '--format=csv,noheader,nounits'], { timeout: 8000, windowsHide: true }, (err, out) => {
+      if (err || !out.trim()) return resolve({ nvidia: false, name: '', memMB: 0 });
+      const [name, mem] = out.trim().split('\n')[0].split(',').map((x) => x.trim());
+      resolve({ nvidia: true, name, memMB: Number(mem) || 0 });
+    });
+  });
+  return gpuCache;
+}
+
 function listAvatars() {
   return store.getAvatars().filter((a) => fs.existsSync(a.file));
 }
@@ -102,7 +117,18 @@ async function handler(job, ctx) {
     await runProcess(paths.python, args, {
       cwd: paths.museTalk,
       signal: ctx.signal,
-      env: { ...process.env, PYTORCH_ENABLE_MPS_FALLBACK: '1', PYTHONUNBUFFERED: '1' },
+      env: {
+        ...process.env,
+        PYTORCH_ENABLE_MPS_FALLBACK: '1',
+        PYTHONUNBUFFERED: '1',
+        // Windows 控制台默认不是 UTF-8，不设的话 Python 打印中文会出错
+        PYTHONUTF8: '1',
+        PYTHONIOENCODING: 'utf-8',
+        // 模型都在本地，不联网
+        HF_HUB_OFFLINE: '1',
+        TRANSFORMERS_OFFLINE: '1',
+        ...(paths.torchHome ? { TORCH_HOME: paths.torchHome } : {}),
+      },
       onStdout: (t) => {
         buf += t;
         const lines = buf.split('\n');
@@ -154,4 +180,4 @@ async function handler(job, ctx) {
   }
 }
 
-module.exports = { status, listAvatars, addAvatars, removeAvatars, renameAvatar, handler };
+module.exports = { status, detectGpu, listAvatars, addAvatars, removeAvatars, renameAvatar, handler };

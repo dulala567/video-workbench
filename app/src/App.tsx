@@ -18,7 +18,7 @@ const PAGES: Record<string, { title: string; sub: string }> = {
   lipsync: { title: '数字人口型', sub: '让数字人形象按音频开口说话，生成后自动加字幕' },
   mp3: { title: '音频提取', sub: '从视频里提取音频：MP3 / M4A / WAV / FLAC，或原样复制音轨' },
   text: { title: '转文字', sub: '把视频或音频转写成文字稿' },
-  tts: { title: 'AI 配音', sub: IS_WIN ? '用豆包语音把文案配成音频，自带逐字字幕' : '用豆包语音把文案配成音频，自带逐字字幕，可直接拿去做数字人' },
+  tts: { title: 'AI 配音', sub: '用豆包语音把文案配成音频，自带逐字字幕，可直接拿去做数字人' },
   collect: { title: '采集中心', sub: '采集视频素材，可自动加入字幕烧录队列' },
   publish: { title: '发布到账号', sub: '把成品按顺序批量发布到多个账号（通过本机的小V猫）' },
 };
@@ -29,7 +29,7 @@ const NAV: { group?: string; items: { id: string; label: string; icon: any; kind
     group: '创作',
     items: [
       { id: 'burn', label: '字幕烧录', icon: Captions, kind: 'burn' },
-      ...(IS_WIN ? [] : [{ id: 'lipsync', label: '数字人口型', icon: MessageSquareText, kind: 'lipsync' as Kind }]),
+      { id: 'lipsync', label: '数字人口型', icon: MessageSquareText, kind: 'lipsync' as Kind },
       { id: 'tts', label: 'AI 配音', icon: Mic, kind: 'tts' },
     ],
   },
@@ -103,17 +103,15 @@ export default function App() {
               <span className="chip">
                 <span className={'dot ' + (env.whisper && env.whisperModel ? 'ok' : 'bad')} /> 识别引擎
               </span>
-              {!IS_WIN && (
-                <span className="chip">
-                  <span className={'dot ' + (env.lipsync.ready ? 'ok' : 'warn')} /> 数字人组件
-                </span>
-              )}
+              <span className="chip">
+                <span className={'dot ' + (env.lipsync.ready && (!IS_WIN || env.gpu?.nvidia) ? 'ok' : 'warn')} title={IS_WIN ? (env.gpu?.nvidia ? env.gpu.name : '没检测到 NVIDIA 显卡，数字人会用 CPU，非常慢') : undefined} /> 数字人组件
+              </span>
             </>
           )}
         </div>
         {page === 'home' && <Dashboard go={setPage} />}
         {page === 'burn' && <Burn />}
-        {page === 'lipsync' && !IS_WIN && <Lipsync go={setPage} />}
+        {page === 'lipsync' && <Lipsync go={setPage} />}
         {page === 'tts' && <Tts go={setPage} />}
         {page === 'mp3' && <Mp3 />}
         {page === 'text' && <Text />}
@@ -124,11 +122,9 @@ export default function App() {
       <footer className="statusbar">
         {env && (
           <>
-            {!IS_WIN && (
-              <span className="item">
-                <span className={'dot ' + (env.lipsync.ready ? 'ok' : 'warn')} /> 数字人组件{env.lipsync.ready ? '就绪' : '未就绪'}
-              </span>
-            )}
+            <span className="item">
+              <span className={'dot ' + (env.lipsync.ready ? 'ok' : 'warn')} /> 数字人组件{env.lipsync.ready ? '就绪' : '未就绪'}
+            </span>
             <span className="item">
               <span className={'dot ' + (env.whisperModel ? 'ok' : 'warn')} /> 识别模型{env.whisperModel ? '就绪' : '未就绪'}
             </span>

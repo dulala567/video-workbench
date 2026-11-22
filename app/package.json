@@ -55,6 +55,10 @@
       {
         "from": "win-resources/fonts",
         "to": "fonts"
+      },
+      {
+        "from": "win-resources/engines",
+        "to": "engines"
       }
     ],
     "npmRebuild": false,

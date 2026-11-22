@@ -36,9 +36,11 @@ function which(bin) {
   return null;
 }
 
-// 工程根目录（app 的上一级），engines/ 放模型和 Python 环境（只有 Mac 开发环境有）
+// 工程根目录（app 的上一级），engines/ 放模型和 Python 环境。
+// Windows 打包版的数字人引擎在 resources/engines：python/（自带 Python + 显卡版 PyTorch）、MuseTalk/、RobustVideoMatting/、torch-hub/（人脸检测模型）
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
-const ENGINES_DIR = path.join(PROJECT_ROOT, 'engines');
+const BUNDLED_ENGINES = resDir('engines');
+const ENGINES_DIR = BUNDLED_ENGINES || path.join(PROJECT_ROOT, 'engines');
 
 // 识别模型：优先用安装包自带的，其次用工程里的
 function defaultWhisperModel() {
@@ -59,7 +61,8 @@ const paths = {
   whisper: () => which('whisper-cli'),
   defaultWhisperModel: defaultWhisperModel(),
   fontsDir: resDir('fonts'), // 安装包自带的字幕字体（Windows 版带思源黑体）
-  python: path.join(ENGINES_DIR, '.venv', 'bin', 'python'),
+  python: BUNDLED_ENGINES ? path.join(ENGINES_DIR, 'python', IS_WIN ? 'python.exe' : 'bin/python3') : path.join(ENGINES_DIR, '.venv', 'bin', 'python'),
+  torchHome: BUNDLED_ENGINES ? path.join(ENGINES_DIR, 'torch-hub') : null, // 自带的人脸检测模型，避免运行时联网下载
   museTalk: path.join(ENGINES_DIR, 'MuseTalk'),
   lipsyncRunner: path.join(ENGINES_DIR, 'lipsync_runner.py'),
   defaultOutRoot: path.join(os.homedir(), IS_WIN ? 'Videos' : 'Movies', '视频工作台'),

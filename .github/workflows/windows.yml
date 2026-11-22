@@ -9,11 +9,17 @@ on:
 env:
   WHISPER_TAG: b5907
   WHISPER_MODEL: ggml-large-v3-turbo-q5_0.bin
+  # 数字人：MuseTalk 1.5 + RobustVideoMatting（换背景），代码固定到和 Mac 版相同的提交
+  MUSETALK_SHA: 2536eaf06b85f775d8e04b7fd81bf6699155a58d
+  RVM_SHA: 53d74c6826735f01f4406b5ca9075eee27bec094
+  # 显卡版 PyTorch（CUDA 12.8，支持 RTX 50 系），安装包自带 CUDA 运行库，用户只要装 NVIDIA 驱动
+  TORCH_INDEX: https://download.pytorch.org/whl/cu128
+  TORCH_PKGS: torch==2.8.0 torchvision==0.23.0
 
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 150
     defaults:
       run:
         shell: pwsh
@@ -68,6 +74,84 @@ jobs:
           & win-resources/bin/ffmpeg.exe -hide_banner -version | Select-Object -First 1
           & win-resources/bin/whisper-cli.exe --help 2>&1 | Select-Object -First 3
 
+      - name: 数字人 Python 环境（自带 Python 3.11 + 显卡版 PyTorch）
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Get-PSDrive -PSProvider FileSystem | Format-Table Name, @{n='FreeGB';e={[math]::Round($_.Free/1GB,1)}}
+          pip install uv
+          $env:UV_PYTHON_PREFERENCE = 'only-managed'
+          uv python install 3.11
+          $src = Split-Path (uv python find 3.11)
+          New-Item -ItemType Directory -Force win-resources/engines | Out-Null
+          Copy-Item $src win-resources/engines/python -Recurse
+          $py = (Resolve-Path win-resources/engines/python/python.exe).Path
+          uv pip install --python $py --break-system-packages --index-url $env:TORCH_INDEX $env:TORCH_PKGS.Split(' ')
+          if ($LASTEXITCODE) { throw 'torch 安装失败' }
+          uv pip install --python $py --break-system-packages "numpy<2" diffusers==0.30.2 transformers==4.39.2 accelerate==0.28.0 huggingface_hub==0.25.2 opencv-python==4.11.0.86 soundfile librosa==0.11.0 einops omegaconf face-alignment==1.5.0 tqdm imageio scipy
+          if ($LASTEXITCODE) { throw '依赖安装失败' }
+          # 运行用不到的 C++ 头文件和链接库，体积大、路径长（Windows 路径超 260 字会解压失败）
+          $sp = 'win-resources/engines/python/Lib/site-packages'
+          Remove-Item "$sp/torch/include" -Recurse -Force -ErrorAction SilentlyContinue
+          Get-ChildItem "$sp/torch/lib" -Filter *.lib | Remove-Item -Force
+          & $py -c "import torch, torchvision, cv2, diffusers, transformers, face_alignment, librosa; print('torch', torch.__version__, 'cuda', torch.version.cuda, 'cv2', cv2.__version__)"
+          if ($LASTEXITCODE) { throw '依赖导入失败' }
+          "{0:N2} GB" -f ((Get-ChildItem win-resources/engines/python -Recurse -File | Measure-Object Length -Sum).Sum / 1GB)
+
+      - name: 缓存数字人模型
+        id: ls-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            app/win-resources/engines/MuseTalk/models
+            app/win-resources/engines/torch-hub
+            app/win-resources/engines/RobustVideoMatting/rvm_mobilenetv3.pth
+          key: lipsync-models-v1
+
+      - name: 下载数字人模型
+        if: steps.ls-cache.outputs.cache-hit != 'true'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $e = 'win-resources/engines'
+          $m = "$e/MuseTalk/models"
+          New-Item -ItemType Directory -Force "$m/musetalkV15", "$m/sd-vae", "$m/whisper", "$m/face-parse-bisent", "$e/torch-hub/checkpoints", "$e/RobustVideoMatting" | Out-Null
+          function Get-File($url, $out, $sha) {
+            curl.exe -L --fail --retry 3 -o $out $url
+            if ($LASTEXITCODE) { throw "下载失败 $url" }
+            if ($sha) { $h = (Get-FileHash $out -Algorithm SHA256).Hash.ToLower(); if ($h -ne $sha) { throw "$out 校验不对：$h" } }
+          }
+          $hf = 'https://huggingface.co'
+          Get-File "$hf/TMElyralab/MuseTalk/resolve/main/musetalkV15/musetalk.json" "$m/musetalkV15/musetalk.json"
+          Get-File "$hf/TMElyralab/MuseTalk/resolve/main/musetalkV15/unet.pth" "$m/musetalkV15/unet.pth"
+          Get-File "$hf/stabilityai/sd-vae-ft-mse/resolve/main/config.json" "$m/sd-vae/config.json"
+          Get-File "$hf/stabilityai/sd-vae-ft-mse/resolve/main/diffusion_pytorch_model.bin" "$m/sd-vae/diffusion_pytorch_model.bin"
+          foreach ($f in 'config.json', 'pytorch_model.bin', 'preprocessor_config.json') { Get-File "$hf/openai/whisper-tiny/resolve/main/$f" "$m/whisper/$f" }
+          Get-File "$hf/ManyOtherFunctions/face-parse-bisent/resolve/main/79999_iter.pth" "$m/face-parse-bisent/79999_iter.pth" '468e13ca13a9b43cc0881a9f99083a430e9c0a38abd935431d1c28ee94b26567'
+          Get-File 'https://download.pytorch.org/models/resnet18-5c106cde.pth' "$m/face-parse-bisent/resnet18-5c106cde.pth"
+          # 官方 resnet18 是旧打包格式，新版 PyTorch 默认拒绝加载，转存一次
+          & "$e/python/python.exe" -c "import torch,sys; p=sys.argv[1]; torch.save(torch.load(p, map_location='cpu', weights_only=False), p)" "$m/face-parse-bisent/resnet18-5c106cde.pth"
+          if ($LASTEXITCODE) { throw 'resnet18 转存失败' }
+          # 人脸检测（face-alignment 默认运行时联网下载，这里提前放好）
+          Get-File 'https://www.adrianbulat.com/downloads/python-fan/s3fd-619a316812.pth' "$e/torch-hub/checkpoints/s3fd-619a316812.pth" '619a31681264d3f7f7fc7a16a42cbbe8b23f31a256f75a366e5a1bcd59b33543'
+          Get-File 'https://www.adrianbulat.com/downloads/python-fan/2DFAN4-11f355bf06.pth.tar' "$e/torch-hub/checkpoints/2DFAN4-11f355bf06.pth.tar" '11f355bf0693120222f5955ce3f9dc8fb5763ebb30a47d7906e509490d32e4aa'
+          # 换背景抠像
+          Get-File 'https://github.com/PeterL1n/RobustVideoMatting/releases/download/v1.0.0/rvm_mobilenetv3.pth' "$e/RobustVideoMatting/rvm_mobilenetv3.pth" '3c7c1d92033f7c38d6577c481d13a195d7d80a159b960f4f3119ac7b534cf4f8'
+
+      - name: 数字人代码
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $e = 'win-resources/engines'
+          function Get-Repo($url, $sha, $dir) {
+            git init -q $dir; git -C $dir fetch -q --depth 1 $url $sha; git -C $dir checkout -q FETCH_HEAD
+            if ($LASTEXITCODE) { throw "拉取失败 $url" }
+          }
+          Get-Repo https://github.com/TMElyralab/MuseTalk.git $env:MUSETALK_SHA "$env:RUNNER_TEMP/MuseTalk"
+          Get-Repo https://github.com/PeterL1n/RobustVideoMatting.git $env:RVM_SHA "$env:RUNNER_TEMP/RVM"
+          Get-ChildItem "$env:RUNNER_TEMP/MuseTalk" -Force -Exclude .git, models, assets | Copy-Item -Destination "$e/MuseTalk" -Recurse -Force
+          Copy-Item "$env:RUNNER_TEMP/RVM/model", "$env:RUNNER_TEMP/RVM/LICENSE" "$e/RobustVideoMatting" -Recurse -Force
+          Copy-Item ../engines/lipsync_runner.py $e/
+          Get-ChildItem $e -Depth 1 | Select-Object FullName | Format-Table -AutoSize
+          "数字人引擎合计 {0:N2} GB" -f ((Get-ChildItem $e -Recurse -File | Measure-Object Length -Sum).Sum / 1GB)
+
       - name: 构建并打包
         run: npm run dist:win
 
@@ -75,7 +159,8 @@ jobs:
         run: |
           $out = "$env:RUNNER_TEMP/selftest"
           $exe = Resolve-Path release/win-unpacked/VideoWorkbench.exe
-          $p = Start-Process -FilePath $exe -ArgumentList '--self-test', "`"$out`"", '--sample', "`"$(Resolve-Path ci/sample_zh.mp3)`"" -PassThru -Wait
+          $face = "$env:RUNNER_TEMP/MuseTalk/assets/demo/monalisa/monalisa.png"
+          $p = Start-Process -FilePath $exe -ArgumentList '--self-test', "`"$out`"", '--sample', "`"$(Resolve-Path ci/sample_zh.mp3)`"", '--face', "`"$face`"" -PassThru -Wait
           Get-Content "$out/selftest.json" -Encoding utf8
           if ($p.ExitCode -ne 0) { throw "自检失败，退出码 $($p.ExitCode)" }
 
@@ -95,7 +180,7 @@ jobs:
           $name = "VideoWorkbench-Windows-x64-v$ver"
           Rename-Item release/win-unpacked $name
           Copy-Item ci/ReadMe.txt release/$name/
-          7z a -tzip -mx=5 "release/$name.zip" "./release/$name"
+          7z a -tzip -mx=5 -mmt=on "release/$name.zip" "./release/$name"
           "ZIP_NAME=$name" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           Get-Item "release/$name.zip" | Select-Object Name, Length
 

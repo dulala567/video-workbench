@@ -56,7 +56,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
               <div className="desc">各模块默认在这里建自己的子文件夹（字幕输出、MP3输出、转文字输出……），也可以在下面单独指定。</div>
             </div>
           </div>
-          {DIRS.filter(([k]) => !IS_WIN || (k !== 'lipsync' && k !== 'avatars')).map(([k, label, desc]) => (
+          {DIRS.map(([k, label, desc]) => (
             <div className="set-row" key={k}>
               <label>{label}</label>
               <div>
@@ -174,8 +174,6 @@ export default function Settings({ onClose }: { onClose: () => void }) {
             </div>
           </div>
 
-          {!IS_WIN && (
-            <>
           <div className="set-group">数字人</div>
           <div className="set-row">
             <label>同时生成数量</label>
@@ -192,9 +190,6 @@ export default function Settings({ onClose }: { onClose: () => void }) {
             </div>
           </div>
 
-            </>
-          )}
-
           {env && (
             <>
               <div className="set-group">环境检测结果</div>
@@ -204,13 +199,10 @@ export default function Settings({ onClose }: { onClose: () => void }) {
                   [env.gpuEncodeName || '硬件编码（没有就用 CPU）', env.gpuEncode],
                   ['whisper-cli', env.whisper],
                   ['识别模型', env.whisperModel],
-                  ...(IS_WIN
-                    ? []
-                    : [
-                        ['数字人 Python 环境', env.lipsync.python],
-                        ['数字人模型权重', env.lipsync.weights],
-                        ['数字人口型脚本', env.lipsync.runner],
-                      ]),
+                  ['数字人 Python 环境', env.lipsync.python],
+                  ['数字人模型权重', env.lipsync.weights],
+                  ['数字人口型脚本', env.lipsync.runner],
+                  ...(IS_WIN ? [[env.gpu?.nvidia ? `NVIDIA 显卡：${env.gpu.name}` : 'NVIDIA 显卡（没有的话数字人用 CPU，非常慢）', !!env.gpu?.nvidia]] : []),
                 ].map(([n, ok]) => (
                   <div key={n as string} className="row">
                     <span className={'dot ' + (ok ? 'ok' : 'bad')} />

@@ -92,6 +92,7 @@ async function checkEnv() {
     whisperModel: fs.existsSync(model),
     whisperModelPath: model,
     lipsync: lipsync.status(),
+    gpu: await lipsync.detectGpu(),
     disk,
     chip: os.cpus()[0]?.model || '',
     memGB: Math.round(os.totalmem() / 1024 ** 3),

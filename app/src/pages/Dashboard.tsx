@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Captions, MessageSquareText, FileText, AudioLines, ListChecks, CircleCheck, ArrowRight, Check, X, FolderOpen, CloudDownload, Send, Mic } from 'lucide-react';
-import { api, useJobs, useEnv, today, fileName, Kind, IS_WIN } from '../api';
+import { api, useJobs, useEnv, today, fileName, Kind } from '../api';
 import { Progress } from '../components/ui';
 import { useAvatars } from './Lipsync';
 
@@ -57,7 +57,7 @@ export default function Dashboard({ go }: { go: (p: string) => void }) {
   const curStep = steps.findIndex((s) => !s.done);
 
   const cards = [
-    ...(IS_WIN ? [] : [{ k: 'lipsync' as Kind, icon: <MessageSquareText size={18} />, title: '数字人口型', desc: '形象 + 音频，批量生成口播视频' }]),
+    { k: 'lipsync' as Kind, icon: <MessageSquareText size={18} />, title: '数字人口型', desc: '形象 + 音频，批量生成口播视频' },
     { k: 'burn' as Kind, icon: <Captions size={18} />, title: '字幕烧录', desc: '识别语音，把字幕和标题烧进视频' },
     { k: 'text' as Kind, icon: <FileText size={18} />, title: '转文字', desc: '视频音频转文案，一键复制' },
     { k: 'tts' as Kind, icon: <Mic size={18} />, title: 'AI 配音', desc: '豆包语音配音，或一段提示词生成整段音频' },
@@ -76,7 +76,7 @@ export default function Dashboard({ go }: { go: (p: string) => void }) {
           <span className="small muted">{new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}</span>
         </div>
         <div className="row" style={{ gap: 10, marginTop: 12 }}>
-          {((IS_WIN ? ['burn', 'tts', 'text', 'mp3'] : ['lipsync', 'burn', 'tts', 'text', 'mp3']) as Kind[]).map((k) => (
+          {(['lipsync', 'burn', 'tts', 'text', 'mp3'] as Kind[]).map((k) => (
             <div key={k} className="card grow" style={{ padding: '12px 16px', background: 'var(--panel-2)' }}>
               <div className="small muted">{KIND_NAME[k]}</div>
               <div style={{ fontSize: 26, fontWeight: 700, marginTop: 2 }}>
@@ -103,7 +103,7 @@ export default function Dashboard({ go }: { go: (p: string) => void }) {
         </div>
       </div>
 
-      {!IS_WIN && !hideGuide && doneSteps < 4 && (
+      {!hideGuide && doneSteps < 4 && (
         <div className="card">
           <div className="row">
             <b>快速上手</b>

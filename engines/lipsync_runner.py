@@ -24,6 +24,26 @@ import cv2
 import numpy as np
 import torch
 
+# Windows 上 OpenCV 的 imread/imwrite 不认中文路径（用户名、输出目录里常有中文），
+# 换成先读字节再解码、先编码再写字节。MuseTalk 内部调用的也是 cv2.imread，一起生效。
+if sys.platform == "win32":
+    _imread, _imwrite = cv2.imread, cv2.imwrite
+
+    def _imread_u(path, flags=cv2.IMREAD_COLOR):
+        try:
+            data = np.fromfile(path, dtype=np.uint8)
+        except (OSError, ValueError):
+            return None
+        return cv2.imdecode(data, flags) if data.size else None
+
+    def _imwrite_u(path, img, params=None):
+        ok, buf = cv2.imencode(os.path.splitext(path)[1] or ".png", img, params or [])
+        if ok:
+            buf.tofile(path)
+        return ok
+
+    cv2.imread, cv2.imwrite = _imread_u, _imwrite_u
+
 # MuseTalk 的代码和权重都按「仓库根目录」的相对路径找
 MUSETALK_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "MuseTalk")
 if MUSETALK_DIR not in sys.path:
@@ -49,6 +69,10 @@ def pick_device():
     if torch.cuda.is_available():
         return torch.device("cuda")
     return torch.device("cpu")
+
+
+# 这里出的是中间文件，后面还会按清晰度重新编码一次，所以只求快、画质留足
+VIDEO_ENC = ["-c:v", "h264_videotoolbox", "-q:v", "70"] if sys.platform == "darwin" else ["-c:v", "libx264", "-preset", "veryfast", "-crf", "16"]
 
 
 def ffmpeg_bin():
@@ -234,18 +258,42 @@ def prepare_alpha(cache, n, device):
 
 
 class Background:
-    """背景素材：图片固定不动；视频按 25fps 循环播放。统一裁成和形象同样大小（铺满、居中裁切）。"""
+    """背景素材：图片固定不动；视频按 25fps 循环播放。统一裁成和形象同样大小（铺满、居中裁切）。
+    视频用 ffmpeg 解码成原始帧从管道读，不用 cv2.VideoCapture（它在 Windows 上打不开中文路径）。"""
 
     def __init__(self, path, w, h):
         self.w, self.h = w, h
-        self.cap = None
+        self.proc = None
         self.img = None
+        self.path = path
         if os.path.splitext(path)[1].lower() in (".jpg", ".jpeg", ".png", ".webp", ".bmp"):
             self.img = self.cover(cv2.imread(path))
         else:
-            self.cap = cv2.VideoCapture(path)
-            if not self.cap.isOpened():
+            self.open()
+            if self.read() is None:
                 raise RuntimeError("读不了背景视频：" + path)
+            self.open()
+
+    def open(self):
+        self.close()
+        vf = f"fps={FPS},scale={self.w}:{self.h}:force_original_aspect_ratio=increase,crop={self.w}:{self.h}"
+        self.proc = subprocess.Popen(
+            [ffmpeg_bin(), "-v", "error", "-stream_loop", "-1", "-i", self.path, "-an", "-vf", vf, "-f", "rawvideo", "-pix_fmt", "bgr24", "-"],
+            stdout=subprocess.PIPE,
+        )
+
+    def read(self):
+        n = self.w * self.h * 3
+        buf = self.proc.stdout.read(n)
+        if len(buf) < n:
+            return None
+        return np.frombuffer(buf, dtype=np.uint8).reshape(self.h, self.w, 3)
+
+    def close(self):
+        if self.proc:
+            self.proc.kill()
+            self.proc.wait()
+            self.proc = None
 
     def cover(self, img):
         if img is None:
@@ -260,11 +308,11 @@ class Background:
     def next(self):
         if self.img is not None:
             return self.img
-        ok, f = self.cap.read()
-        if not ok:
-            self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-            ok, f = self.cap.read()
-        return self.cover(f)
+        f = self.read()
+        if f is None:  # 理论上 -stream_loop 不会读完，保险起见重开
+            self.open()
+            f = self.read()
+        return f
 
 
 # ---------------------------------------------------------------- 生成
@@ -354,7 +402,7 @@ def main():
             "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{w}x{h}", "-r", str(FPS), "-i", "-",
             "-i", args.audio,
             "-map", "0:v", "-map", "1:a",
-            "-c:v", "h264_videotoolbox", "-q:v", "70", "-pix_fmt", "yuv420p",
+            *VIDEO_ENC, "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", part,
         ],
         stdin=subprocess.PIPE,
@@ -400,6 +448,8 @@ def main():
             el = time.time() - t1
             progress(0.33 + 0.65 * done / total, f"生成口型 {done}/{total} 帧 · {done / max(el, 1e-3):.1f} 帧/秒")
     enc.stdin.close()
+    if bg is not None:
+        bg.close()
     if enc.wait() != 0:
         raise RuntimeError("ffmpeg 编码失败")
     os.replace(part, args.out)
