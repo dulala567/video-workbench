@@ -28,6 +28,16 @@ cd app && npm run dev
 
 右侧「字幕与文案样式」面板（字幕烧录和数字人共用）：3 个基础样式 + 13 个花字模板、随机样式、字体/字号/颜色/描边/外描边/阴影/底框细调、可拖动位置的标题/声明/文案、滤镜（固定/随机）、另存为我的样式、应用到选中视频。
 
+## Windows 版
+
+GitHub 私有仓库 `dulala567/video-workbench` 的 Actions（`.github/workflows/windows.yml`）在 Windows 云电脑上打包：推送到 main 或在 Actions 页手动运行都会出一个 ZIP（Actions 运行页的 Artifacts 里下载，保留 30 天）。
+
+- 打包时下载 Windows 版 ffmpeg（gyan.dev essentials）、whisper.cpp（`b5907` 的 OpenBLAS 版）、识别模型 `ggml-large-v3-turbo-q5_0.bin`（574MB）、思源黑体（Noto Sans SC，OFL 开源），放进安装包的 `resources/bin|models|fonts`。
+- **不带数字人**（要 NVIDIA 显卡 + CUDA PyTorch + 约 4GB 模型，做不到解压即用），界面里相关入口都隐藏。
+- 字幕字体：Mac 字体在 Windows 上换成宋体/楷体/黑体或自带的思源黑体；字幕滤镜在临时目录里用相对路径，字体目录参数转义盘符冒号。
+- 硬件编码：Windows 依次试 NVENC / QSV / AMF（真编一小段成功才用），否则 x264。
+- 自检：`VideoWorkbench.exe --self-test <目录> --sample <中文语音>`，打包流程里在真机跑一遍（生成视频、两种样式烧录中文字幕、三种音频提取、中文识别、界面加载），结果和截图在 Artifacts 的 `selftest` 里。
+
 ## 目录结构
 
 ```
@@ -81,6 +91,9 @@ cd app && npm run dev
 测试素材：MuseTalk 仓库自带的示例形象（yongen、sun，已加进形象库，可以删掉）和 macOS `say` 合成的中文语音。还没用真人实拍形象和真人录音测过。
 
 ## 已知限制
+
+- Windows 版只在 GitHub 的 Windows Server 云电脑上自检过，没在真实的 Windows 10/11 个人电脑上跑过；NVIDIA/Intel/AMD 硬件编码因为云电脑没有显卡，都没实测（检测失败会自动退回 CPU 编码）。云电脑上 18 秒中文语音识别用了 40 秒（4 核 CPU）。
+- Windows 版没有微软代码签名，第一次打开会弹「Windows 已保护你的电脑」，要点「更多信息 → 仍要运行」。
 
 - 豆包这个 API Key 目前只开通了**语音合成 2.0**（和声音复刻 2.0 的资源）。语音识别（录音文件识别标准版/极速版）都返回「requested resource not granted」，所以字幕识别仍用本机 whisper。在火山控制台开通「豆包录音文件识别」后可以再接上，中文识别会比 whisper 更准。
 
