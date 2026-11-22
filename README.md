@@ -94,6 +94,7 @@ GitHub 私有仓库 `dulala567/video-workbench` 的 Actions（`.github/workflows
 
 ## 已知限制
 
+- Windows 版（含数字人）ZIP 约 7.8GB，其中数字人引擎约 8.8GB（解压后），显卡版 PyTorch 约 4.9GB。云电脑（4 核、无显卡）上用 CPU 跑 3 秒照片对口型 + 换背景用了 18.5 分钟（含加载模型和首次分析形象），能出片但没有实用价值，真实使用要靠 NVIDIA 显卡；显卡上的速度没实测。
 - Windows 版只在 GitHub 的 Windows Server 云电脑上自检过，没在真实的 Windows 10/11 个人电脑上跑过；NVIDIA/Intel/AMD 硬件编码因为云电脑没有显卡，都没实测（检测失败会自动退回 CPU 编码）。云电脑上 18 秒中文语音识别用了 40 秒（4 核 CPU）。
 - Windows 版没有微软代码签名，第一次打开会弹「Windows 已保护你的电脑」，要点「更多信息 → 仍要运行」。
 
