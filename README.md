@@ -35,6 +35,12 @@ GitHub 私有仓库 `dulala567/video-workbench` 的 Actions（`.github/workflows
 - 打包时下载 Windows 版 ffmpeg（gyan.dev essentials）、whisper.cpp（`b5907` 的 OpenBLAS 版）、识别模型 `ggml-large-v3-turbo-q5_0.bin`（574MB）、思源黑体（Noto Sans SC，OFL 开源），放进安装包的 `resources/bin|models|fonts`。
 - **带数字人**：打包时用 uv 装一份可搬动的 Python 3.11（python-build-standalone），装显卡版 PyTorch（`torch==2.8.0`，CUDA 12.8，含 CUDA 运行库，用户只需 NVIDIA 驱动）和 MuseTalk 依赖，删掉运行用不到的 `torch/include` 和 `.lib`；MuseTalk、RobustVideoMatting 代码固定到和 Mac 相同的提交；模型（MuseTalk 1.5、sd-vae、whisper-tiny、face-parse、人脸检测 s3fd/2DFAN4、RVM）下载后校验 SHA256，放进 `resources/engines`。人脸检测模型通过 `TORCH_HOME` 指到包内，运行时不联网。
 - 数字人在 NVIDIA 显卡上跑；没有 NVIDIA 显卡会退回 CPU（非常慢），界面顶部状态点和「设置 → 检测环境」会提示。显卡检测用 `nvidia-smi`。
+- 显卡要求：PyTorch 的 CUDA 12.8 版支持 RTX 20 系（Turing）及以上；GTX 10 系及更老的不支持（没核实，依据是 PyTorch 发布说明里 cu128 去掉了老架构）。8GB 的 RTX 3070 由使用者实际跑通过。
+- 降显存（v0.1.1）：模型先在内存里转半精度再放进显卡（原版先全精度进显卡，加载瞬间多占 3GB 多）；人脸检测在长边缩到 960 的图上做、关键点仍在原图上算；分析完形象后 `empty_cache`；按剩余显存定每批帧数（≥6GB 16 帧，≥3.5GB 8 帧，否则 4 帧），显存不足时减半重试。Mac 上模拟过显存不足的重试；真实 NVIDIA 显卡上的显存占用没测，每条任务的 `.log` 里会记最高显存。
+- Windows 的 NVIDIA 驱动在显存满时会用内存顶替显存（不报错，慢一个数量级），所以「显存不够」表现为极慢而不是失败；生成进度里显存剩余 <0.5GB 时会提示关掉其他占显卡的程序。
+- 中文路径（v0.1.1）：whisper-cli（`b5907`）在 Windows 上读模型路径时按 UTF-8 转码，而命令行参数是系统编码，软件放在中文文件夹里就崩溃（退出码 3221226505）。现在把工作目录切到模型文件夹、只传文件名，音频走标准输入。云端自检改成在带中文和空格的文件夹里跑。
+- 数字人进度（v0.1.1）：Windows 上 Python 输出行尾是 `\r\n`，原来的进度行正则匹配不上，任务一直显示「准备中」。
+- 升级补丁：每次打包另出 `VideoWorkbench-patch-v<版本>.zip`（`resources/app.asar` + `resources/engines/lipsync_runner.py`，几 MB），覆盖到已解压的完整包里即可升级；Python 环境或模型有变化时补丁不够，要重新下完整包。
 - 口型脚本的 Windows 适配：中间文件用 libx264 编码（Mac 用 VideoToolbox）；OpenCV 的 `imread/imwrite` 不认中文路径，换成读字节后解码；背景视频改用 ffmpeg 管道解码（`cv2.VideoCapture` 同样不认中文路径）。
 - 字幕字体：Mac 字体在 Windows 上换成宋体/楷体/黑体或自带的思源黑体；字幕滤镜在临时目录里用相对路径，字体目录参数转义盘符冒号。
 - 硬件编码：Windows 依次试 NVENC / QSV / AMF（真编一小段成功才用），否则 x264。
