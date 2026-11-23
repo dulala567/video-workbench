@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { BrowserWindow } = require('electron');
 const { paths } = require('./paths.cjs');
-const { ffmpeg, probe, detectHwEncoder } = require('./ffmpeg.cjs');
+const { ffmpeg, probe, detectHwEncoder, runProcess, filterPath } = require('./ffmpeg.cjs');
 const { transcribe, toSubtitleLines } = require('./asr.cjs');
 const { burnWithLook, resolveLook, handlers } = require('./jobs.cjs');
 const { presets } = require('./ass.cjs');
@@ -45,7 +45,7 @@ async function run(checkEnv) {
     if (!env.ffmpeg) throw new Error('找不到 ffmpeg');
     if (!env.whisper) throw new Error('找不到 whisper-cli');
     if (!env.whisperModel) throw new Error('找不到识别模型 ' + env.whisperModelPath);
-    return { env: { ...env, lipsync: undefined }, ffmpeg: paths.ffmpeg(), whisper: paths.whisper(), fontsDir: paths.fontsDir };
+    return { env: { ...env, lipsync: undefined }, exe: process.execPath, ffmpeg: paths.ffmpeg(), whisper: paths.whisper(), fontsDir: paths.fontsDir };
   });
 
   // 文件名带中文和空格，顺便测路径
@@ -70,6 +70,35 @@ async function run(checkEnv) {
       await ffmpeg(['-ss', '1', '-i', burned, '-frames:v', '1', png]);
       return { size: fs.statSync(burned).size, frame: path.basename(png) };
     });
+  }
+
+  // 软件放在中文文件夹里时，字幕滤镜还能不能读到包里自带的字体
+  if (paths.fontsDir) {
+    await step(
+      '字幕字体（安装包自带的思源黑体）',
+      async () => {
+        const dir = path.join(out, '字体 检查');
+        fs.mkdirSync(dir, { recursive: true });
+        const ass = [
+          '[Script Info]', 'ScriptType: v4.00+', 'PlayResX: 720', 'PlayResY: 1280', '',
+          '[V4+ Styles]',
+          'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
+          'Style: Default,Noto Sans SC,60,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,3,0,2,10,10,10,1', '',
+          '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+          'Dialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,中文字体检查',
+        ].join('\n');
+        fs.writeFileSync(path.join(dir, 'sub.ass'), ass);
+        let err = '';
+        await runProcess(paths.ffmpeg(), ['-hide_banner', '-v', 'verbose', '-f', 'lavfi', '-i', 'color=c=black:s=720x1280:d=0.2', '-vf', `ass=sub.ass:fontsdir=${filterPath(paths.fontsDir)}`, '-frames:v', '1', '-f', 'null', '-'], {
+          cwd: dir,
+          onStderr: (t) => (err += t),
+        });
+        const picked = err.split(/\r?\n/).filter((l) => /fontselect/.test(l)).map((l) => l.replace(/^.*fontselect:\s*/, ''));
+        if (!picked.some((l) => /->.*Noto\s?Sans\s?SC/i.test(l))) throw new Error('没用上自带字体：' + (picked.join(' | ') || err.slice(-800)));
+        return { fontsDir: paths.fontsDir, picked };
+      },
+      false
+    );
   }
 
   for (const fmt of ['mp3', 'wav', 'copy']) {
@@ -100,10 +129,21 @@ async function run(checkEnv) {
       const bgImg = path.join(out, '背景 图.png');
       await ffmpeg(['-f', 'lavfi', '-i', 'color=c=0x3366cc:s=720x1280', '-frames:v', '1', bgImg]);
       const [av] = await lipsync.addAvatars([path.resolve(face)]);
-      const r = await lipsync.handler({ input: { avatarId: av.id, audio, bg: { mode: 'fixed', files: [bgImg] }, look: { showSubs: false } } }, ctx);
+      // 记录进度回报：进度条在界面上动不动，靠的就是这些回调
+      const stages = [];
+      let maxP = 0;
+      const lsCtx = {
+        ...ctx,
+        progress: (p, stage) => {
+          maxP = Math.max(maxP, p);
+          if (stage && stages[stages.length - 1] !== stage.replace(/[\d./]+/g, '#')) stages.push(stage.replace(/[\d./]+/g, '#'));
+        },
+      };
+      const r = await lipsync.handler({ input: { avatarId: av.id, audio, bg: { mode: 'fixed', files: [bgImg] }, look: { showSubs: false } } }, lsCtx);
+      if (!stages.some((x) => x.includes('生成口型'))) throw new Error('口型脚本的进度没有传到界面：' + JSON.stringify(stages));
       const png = path.join(out, '数字人.png');
       await ffmpeg(['-ss', '1.5', '-i', r.file, '-frames:v', '1', png]);
-      return { file: r.file, duration: (await probe(r.file)).duration, frame: path.basename(png) };
+      return { file: r.file, duration: (await probe(r.file)).duration, frame: path.basename(png), maxProgress: maxP, stages };
     });
   }
 

@@ -114,7 +114,11 @@ async function handler(job, ctx) {
     const args = [paths.lipsyncRunner, '--avatar', av.file, '--cache', av.cacheDir, '--audio', audio, '--out', raw, '--bbox-shift', String(s.lipsync.bboxShift || 0)];
     if (bg?.mode && bg.mode !== 'off' && bg.files?.length) args.push('--bg', bg.mode === 'fixed' ? bg.files[0] : pick(bg.files));
     let buf = '';
+    // 口型脚本的运行记录（用的什么显卡、显存、每批几帧、报错）存一份，出问题时好查
+    const logFile = path.join(rawDir, name + '.log');
+    fs.writeFileSync(logFile, `${new Date().toLocaleString()} 形象 ${av.name}（${av.width}×${av.height}） 音频 ${path.basename(audio)}\n`);
     await runProcess(paths.python, args, {
+      onStderr: (t) => fs.appendFileSync(logFile, t),
       cwd: paths.museTalk,
       signal: ctx.signal,
       env: {
@@ -133,7 +137,7 @@ async function handler(job, ctx) {
       },
       onStdout: (t) => {
         buf += t;
-        const lines = buf.split('\n');
+        const lines = buf.split(/\r?\n/); // Windows 上 Python 输出的行尾是 \r\n
         buf = lines.pop();
         for (const l of lines) {
           const m = l.match(/^@@PROGRESS ([\d.]+) ?(.*)$/);

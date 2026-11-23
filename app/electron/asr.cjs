@@ -23,18 +23,29 @@ async function transcribe(file, { signal, onProgress } = {}) {
     onProgress?.(0, '提取音频');
     await ffmpeg(['-i', file, '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', wav], { signal });
     const outBase = path.join(tmp, 'out');
+    // whisper-cli 在 Windows 上读模型路径时不认中文（软件放在中文文件夹里就会崩溃），
+    // 所以把工作目录切到模型所在的文件夹，只传模型文件名；音频从标准输入喂进去，不传路径。
     // -ml 1：逐词输出时间戳，后面按真实时间断句
-    const args = ['-m', model, '-f', wav, '-l', s.asr.language || 'zh', '-t', String(s.asr.threads || 8), '-ml', '1', '-oj', '-of', outBase, '-pp'];
+    const args = ['-m', path.basename(model), '-f', '-', '-l', s.asr.language || 'zh', '-t', String(s.asr.threads || 8), '-ml', '1', '-oj', '-of', outBase, '-pp'];
     const prompt = PROMPTS[s.asr.language];
     if (prompt) args.push('--prompt', prompt);
     onProgress?.(0.05, '识别语音');
-    await runProcess(whisper, args, {
-      signal,
-      onStderr: (t) => {
-        const m = t.match(/progress\s*=\s*(\d+)%/g);
-        if (m) onProgress?.(0.05 + 0.95 * (Number(m[m.length - 1].match(/\d+/)[0]) / 100), '识别语音');
-      },
-    });
+    try {
+      await runProcess(whisper, args, {
+        signal,
+        cwd: path.dirname(model),
+        stdinFile: wav,
+        onStderr: (t) => {
+          const m = t.match(/progress\s*=\s*(\d+)%/g);
+          if (m) onProgress?.(0.05 + 0.95 * (Number(m[m.length - 1].match(/\d+/)[0]) / 100), '识别语音');
+        },
+      });
+    } catch (e) {
+      if (process.platform === 'win32' && /[^\x00-\x7f]/.test(path.basename(model) + outBase)) {
+        e.message += '\n（识别模型的文件名或系统临时文件夹路径里有中文，识别程序可能不认；把模型文件名改成英文再试）';
+      }
+      throw e;
+    }
     const j = JSON.parse(fs.readFileSync(outBase + '.json', 'utf8'));
     const zh = (s.asr.language || 'zh') === 'zh';
     return (j.transcription || [])

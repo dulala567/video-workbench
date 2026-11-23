@@ -79,6 +79,51 @@ VIDEO_ENC = ["-c:v", "h264_videotoolbox", "-q:v", "70"] if sys.platform == "darw
 FA_COMPILE = sys.platform != "win32"
 
 
+def free_gpu(device):
+    """把用完的显存还给系统。PyTorch 默认占着不还；8GB 这类显卡上显存一满，
+    NVIDIA 驱动会改用内存顶替显存，不报错但慢十倍左右。"""
+    if device.type != "cuda":
+        return
+    import gc
+
+    gc.collect()
+    try:
+        torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
+def gpu_free_gb(device):
+    """NVIDIA 显卡当前剩余显存（GB）；别的设备返回 None。"""
+    if device.type != "cuda":
+        return None
+    try:
+        free, _total = torch.cuda.mem_get_info()
+        return free / 1024**3
+    except Exception:
+        return None
+
+
+def is_oom(e):
+    return "out of memory" in str(e).lower()
+
+
+def pick_batch_size(want, free_gb):
+    """显存少就一批少算几帧（free_gb 为 None 表示不是 NVIDIA 显卡，不限制）。"""
+    if free_gb is None or free_gb >= 6:
+        return want
+    return min(want, 8 if free_gb >= 3.5 else 4)
+
+
+def speed_note(device, free_gb):
+    """进度后面附带的提醒：让人看得出为什么慢。"""
+    if device.type == "cpu":
+        return " · 没用上显卡，在用 CPU 算（很慢）"
+    if free_gb is not None and free_gb < 0.5:
+        return " · 显存快满了，关掉其他占显卡的程序会快很多"
+    return ""
+
+
 def ffmpeg_bin():
     for p in ["/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg", "/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"]:
         if os.path.exists(p):
@@ -118,10 +163,32 @@ def extract_frames(src, out_dir):
     return [os.path.join(out_dir, f) for f in files]
 
 
+DETECT_LONG_SIDE = 960  # 找人脸位置时把大图缩到这个尺寸
+
+
+def detect_faces_small(fa, rgb):
+    """在缩小的图上找人脸位置，再把框换算回原图。
+    人脸检测占的显存和画面大小成正比，1080×1920 的原图直接检测要好几个 GB；
+    口播画面里人脸都很大，缩小了一样找得到。关键点仍然在原图上算，精度不变。
+    图本来就不大时返回 None，交给 face-alignment 自己检测。"""
+    h, w = rgb.shape[:2]
+    k = DETECT_LONG_SIDE / max(h, w)
+    if k >= 1:
+        return None
+    small = cv2.resize(rgb, (max(1, round(w * k)), max(1, round(h * k))), interpolation=cv2.INTER_AREA)
+    dets = fa.face_detector.detect_from_image(small)
+    out = []
+    for d in dets:
+        d = np.array(d, dtype=np.float32)
+        d[:4] /= k
+        out.append(d)
+    return out
+
+
 def landmark_bbox(fa, frame_bgr, bbox_shift):
     """按 MuseTalk 的规则，用 68 点关键点算出口型区域的框。找不到人脸返回 None。"""
     rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-    res = fa.get_landmarks_from_image(rgb, return_bboxes=True)
+    res = fa.get_landmarks_from_image(rgb, detected_faces=detect_faces_small(fa, rgb), return_bboxes=True)
     lms, _, boxes = res if isinstance(res, tuple) else (res, None, None)
     if not lms:
         return None
@@ -340,7 +407,15 @@ def main():
     device = pick_device()
     dtype = torch.float32 if (args.fp32 or device.type == "cpu") else torch.float16
     log("设备：", device, dtype)
-    progress(0.0, "加载模型")
+    if device.type == "cuda":
+        try:
+            free, total_mem = torch.cuda.mem_get_info()
+            log(f"显卡：{torch.cuda.get_device_name(0)}，显存共 {total_mem / 1024**3:.1f}GB，开始时剩 {free / 1024**3:.1f}GB")
+        except Exception as e:
+            log("读不到显存信息：", e)
+    elif device.type == "cpu" and sys.platform == "win32":
+        log("没检测到可用的 NVIDIA 显卡（或驱动太旧），改用 CPU，会非常慢")
+    progress(0.0, "加载模型" + ("（没用上显卡，在用 CPU）" if device.type == "cpu" else ""))
 
     from transformers import WhisperModel
     from musetalk.utils.utils import load_all_model
@@ -348,16 +423,20 @@ def main():
     from musetalk.utils.face_parsing import FaceParsing
     from musetalk.utils.blending import get_image_blending
 
+    # 模型先在内存里转成半精度，再放进显卡。
+    # 原版是先按全精度放进显卡再转，加载那一下要多占 3GB 多显存，6GB/8GB 的显卡容易被挤满。
     vae, unet, pe = load_all_model(
         unet_model_path=os.path.join("models", "musetalkV15", "unet.pth"),
         vae_type="sd-vae",
         unet_config=os.path.join("models", "musetalkV15", "musetalk.json"),
-        device=device,
+        device=torch.device("cpu"),
     )
-    vae.vae = vae.vae.to(device=device, dtype=dtype)
+    vae.vae = vae.vae.to("cpu").to(dtype=dtype).to(device)
     vae.device = device
-    unet.model = unet.model.to(device=device, dtype=dtype)
-    pe = pe.to(device=device, dtype=dtype)
+    unet.model = unet.model.to(dtype=dtype).to(device)
+    unet.device = device
+    pe = pe.to(dtype=dtype).to(device)
+    free_gpu(device)
     timesteps = torch.tensor([0], device=device)
 
     fp = FaceParsing(left_cheek_width=90, right_cheek_width=90)
@@ -365,6 +444,7 @@ def main():
     del fp
     log(f"形象准备完成 {time.time() - t0:.1f}s")
     alpha_dir = prepare_alpha(args.cache, info["frames"], device) if args.bg else None
+    free_gpu(device)  # 分析形象、抠图用过的显存先还掉，再开始生成
     bg = Background(args.bg, info["width"], info["height"]) if args.bg else None
 
     # 音频特征
@@ -430,15 +510,27 @@ def main():
 
     t1 = time.time()
     done = 0
-    bs = args.batch_size
+    bs = pick_batch_size(args.batch_size, gpu_free_gb(device))
+    log(f"每批 {bs} 帧")
     with torch.no_grad():
-        for s in range(0, total, bs):
+        s = 0
+        while s < total:
             idxs = [cyc(i) for i in range(s, min(total, s + bs))]
-            wb = chunks[s : s + len(idxs)].to(device=device, dtype=dtype)
-            lb = latents[idxs].to(device=device, dtype=dtype)
-            audio_feat = pe(wb)
-            pred = unet.model(lb, timesteps, encoder_hidden_states=audio_feat).sample
-            recon = vae.decode_latents(pred)
+            try:
+                wb = chunks[s : s + len(idxs)].to(device=device, dtype=dtype)
+                lb = latents[idxs].to(device=device, dtype=dtype)
+                audio_feat = pe(wb)
+                pred = unet.model(lb, timesteps, encoder_hidden_states=audio_feat).sample
+                recon = vae.decode_latents(pred)
+            except RuntimeError as e:
+                # 显存不够：一批少算一半再试，减到 1 帧还不行才算失败
+                if not is_oom(e) or bs == 1:
+                    raise
+                wb = lb = audio_feat = pred = None
+                bs = max(1, bs // 2)
+                free_gpu(device)
+                log(f"显存不够，改成每批 {bs} 帧重试")
+                continue
             for k, face in enumerate(recon):
                 idx = idxs[k]
                 frame, mask, alpha = load(idx)
@@ -448,9 +540,10 @@ def main():
                 if bg is not None:
                     out = (out.astype(np.float32) * alpha + bg.next().astype(np.float32) * (1 - alpha)).astype(np.uint8)
                 enc.stdin.write(np.ascontiguousarray(out).tobytes())
+            s += len(idxs)
             done += len(idxs)
             el = time.time() - t1
-            progress(0.33 + 0.65 * done / total, f"生成口型 {done}/{total} 帧 · {done / max(el, 1e-3):.1f} 帧/秒")
+            progress(0.33 + 0.65 * done / total, f"生成口型 {done}/{total} 帧 · {done / max(el, 1e-3):.1f} 帧/秒" + speed_note(device, gpu_free_gb(device)))
     enc.stdin.close()
     if bg is not None:
         bg.close()
@@ -459,6 +552,11 @@ def main():
     os.replace(part, args.out)
     os.remove(tmp_wav)
     log(f"完成：{total} 帧，生成 {time.time() - t1:.1f}s，总计 {time.time() - t0:.1f}s")
+    if device.type == "cuda":
+        try:
+            log(f"显存最高用到 {torch.cuda.max_memory_allocated() / 1024**3:.1f}GB（PyTorch 实际占用 {torch.cuda.max_memory_reserved() / 1024**3:.1f}GB）")
+        except Exception:
+            pass
     progress(1.0, "完成")
 
 
@@ -466,8 +564,12 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        log("错误：", e)
         import traceback
 
         traceback.print_exc()
+        # 说明放在最后一行：软件界面只显示输出的最后几行
+        if is_oom(e):
+            log("错误：显存不够。请关掉其他占用显卡的程序（直播/录屏软件、别的 AI 软件、多余的浏览器窗口）后重试；设置里「同时生成数量」保持 1。")
+        else:
+            log("错误：", e)
         sys.exit(1)

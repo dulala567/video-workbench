@@ -155,13 +155,19 @@ jobs:
       - name: 构建并打包
         run: npm run dist:win
 
-      - name: 真机自检
+      - name: 真机自检（放在带中文和空格的文件夹里跑）
         run: |
           $out = "$env:RUNNER_TEMP/selftest"
-          $exe = Resolve-Path release/win-unpacked/VideoWorkbench.exe
+          # 用户常把软件解压到带中文的文件夹，自检也这么放，才能测到路径问题
+          $cn = "release/中文 文件夹-含数字人"
+          New-Item -ItemType Directory -Force $cn | Out-Null
+          Move-Item release/win-unpacked "$cn/app"
+          $exe = (Resolve-Path "$cn/app/VideoWorkbench.exe").Path
           $face = "$env:RUNNER_TEMP/MuseTalk/assets/demo/monalisa/monalisa.png"
           $p = Start-Process -FilePath $exe -ArgumentList '--self-test', "`"$out`"", '--sample', "`"$(Resolve-Path ci/sample_zh.mp3)`"", '--face', "`"$face`"" -PassThru -Wait
+          Move-Item "$cn/app" release/win-unpacked
           Get-Content "$out/selftest.json" -Encoding utf8
+          Get-ChildItem "$out" -Recurse -Filter *.log | Where-Object { $_.FullName -match '数字人输出' } | ForEach-Object { "---- $($_.Name)"; Get-Content $_.FullName -Encoding utf8 -Tail 30 }
           if ($p.ExitCode -ne 0) { throw "自检失败，退出码 $($p.ExitCode)" }
 
       - name: 上传自检结果
@@ -173,6 +179,26 @@ jobs:
             ${{ runner.temp }}/selftest/selftest.json
             ${{ runner.temp }}/selftest/*.png
           if-no-files-found: warn
+
+      - name: 升级补丁（只含改动的程序文件，给已经装过完整包的人用）
+        run: |
+          $ver = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $name = "VideoWorkbench-patch-v$ver"
+          New-Item -ItemType Directory -Force "release/$name/resources/engines" | Out-Null
+          Copy-Item release/win-unpacked/resources/app.asar "release/$name/resources/"
+          Copy-Item ../engines/lipsync_runner.py "release/$name/resources/engines/"
+          Copy-Item ci/Patch-ReadMe.txt "release/$name/ReadMe.txt"
+          7z a -tzip -mx=7 "release/$name.zip" "./release/$name/*"
+          "PATCH_NAME=$name" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Get-Item "release/$name.zip" | Select-Object Name, Length
+
+      - name: 上传升级补丁
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PATCH_NAME }}
+          path: app/release/${{ env.PATCH_NAME }}.zip
+          compression-level: 0
+          retention-days: 30
 
       - name: 压缩成 ZIP
         run: |

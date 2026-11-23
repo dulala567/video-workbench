@@ -7,32 +7,73 @@ function filterPath(p) {
   return "'" + String(p).replace(/\\/g, '/').replace(/'/g, "'\\''").replace(/:/g, '\\:') + "'";
 }
 
-function runProcess(cmd, args, { signal, onStdout, onStderr, cwd, env } = {}) {
+// Windows 上程序异常退出时的退出码（十进制很难认），翻译成能看懂的话
+const WIN_CRASH = {
+  3221225477: '程序崩溃（访问了无效内存）',
+  3221225781: '缺少运行库（DLL）',
+  3221225786: '被强行终止',
+  3221226505: '程序崩溃',
+  3221225725: '程序崩溃（栈溢出）',
+};
+
+// Windows 上 kill 只杀得掉进程本身，它开的子进程（比如口型脚本开的 ffmpeg）会留下，所以连同子进程一起结束
+function killTree(child) {
+  if (process.platform === 'win32' && child.pid) {
+    execFile('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {});
+  } else {
+    child.kill('SIGTERM');
+    setTimeout(() => child.kill('SIGKILL'), 3000);
+  }
+}
+
+// stdinFile：把这个文件的内容喂给子进程的标准输入（用来绕开子进程不认中文路径的问题）
+function runProcess(cmd, args, { signal, onStdout, onStderr, cwd, env, stdinFile } = {}) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(new Error('已取消'));
-    const child = spawn(cmd, args, { cwd, env: env || process.env });
+    const child = spawn(cmd, args, { cwd, env: env || process.env, windowsHide: true });
     let stderrTail = '';
-    const onAbort = () => {
-      child.kill('SIGTERM');
-      setTimeout(() => child.kill('SIGKILL'), 3000);
-    };
+    let settled = false;
+    let graceTimer = null;
+    const onAbort = () => killTree(child);
     signal?.addEventListener('abort', onAbort, { once: true });
+    if (stdinFile) {
+      const rs = require('fs').createReadStream(stdinFile);
+      rs.on('error', () => child.stdin.destroy());
+      child.stdin.on('error', () => {}); // 子进程提前退出时写入会报 EPIPE，由退出码说明原因
+      rs.pipe(child.stdin);
+    }
     child.stdout.on('data', (d) => onStdout?.(d.toString()));
     child.stderr.on('data', (d) => {
       const s = d.toString();
       stderrTail = (stderrTail + s).slice(-4000);
       onStderr?.(s);
     });
+    const finish = (code, sig) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(graceTimer);
+      signal?.removeEventListener('abort', onAbort);
+      if (signal?.aborted) return reject(new Error('已取消'));
+      if (code === 0) return resolve();
+      const why = WIN_CRASH[code] ? `${WIN_CRASH[code]}（退出码 ${code}）` : code === null ? `被终止（${sig || '未知信号'}）` : `退出码 ${code}`;
+      reject(new Error(`${require('path').basename(cmd)} ${why}\n${stderrTail.trim().split(/\r?\n/).slice(-6).join('\n')}`));
+    };
     child.on('error', (e) => {
+      if (settled) return;
+      settled = true;
       signal?.removeEventListener('abort', onAbort);
       reject(e);
     });
-    child.on('close', (code) => {
-      signal?.removeEventListener('abort', onAbort);
-      if (signal?.aborted) return reject(new Error('已取消'));
-      if (code === 0) resolve();
-      else reject(new Error(`${require('path').basename(cmd)} 退出码 ${code}\n${stderrTail.trim().split('\n').slice(-6).join('\n')}`));
+    // 正常以 close（输出管道都关了）为准，这样不会丢最后几行输出。
+    // 但进程已经退出、它开的子进程还占着输出管道时 close 一直不来，任务会永远显示「运行中」，所以退出 5 秒后强制收尾。
+    child.on('exit', (code, sig) => {
+      graceTimer = setTimeout(() => {
+        child.stdout.destroy();
+        child.stderr.destroy();
+        finish(code, sig);
+      }, 5000);
     });
+    child.on('close', finish);
   });
 }
 
