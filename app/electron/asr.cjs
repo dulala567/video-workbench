@@ -16,6 +16,11 @@ const PROMPTS = {
 const SV_LANGS = ['zh', 'en', 'ja', 'ko', 'yue'];
 const SR = 16000;
 
+// 识别用几个线程：不超过这台电脑的 CPU 线程数。设得比核心数多反而互相抢，会慢很多。
+function asrThreads(s, cap) {
+  return Math.max(1, Math.min(Number(s.asr.threads) || 4, os.cpus().length || 4, cap));
+}
+
 function pickEngine(s) {
   if ((s.asr.engine || 'auto') === 'whisper') return 'whisper';
   if (!SV_LANGS.includes(s.asr.language || 'zh')) return 'whisper';
@@ -124,7 +129,7 @@ async function transcribeSenseVoice(file, tmp, s, { signal, onProgress } = {}) {
   fs.symlinkSync(paths.senseVoiceDir(), link, 'junction');
   try {
     const lang = s.asr.language || 'zh';
-    const base = ['--sense-voice-model=m/model.int8.onnx', '--tokens=m/tokens.txt', `--num-threads=${Math.max(1, Math.min(8, s.asr.threads || 4))}`, '--sense-voice-use-itn=true', `--sense-voice-language=${lang}`];
+    const base = ['--sense-voice-model=m/model.int8.onnx', '--tokens=m/tokens.txt', `--num-threads=${asrThreads(s, 8)}`, '--sense-voice-use-itn=true', `--sense-voice-language=${lang}`];
     const pieces = [];
     const GROUP = 16; // 一次喂 16 段（约 5 分钟），好回报进度
     for (let g = 0; g < chunks.length; g += GROUP) {
@@ -188,7 +193,7 @@ async function transcribeWhisper(file, tmp, s, { signal, onProgress } = {}) {
     // whisper-cli 在 Windows 上读模型路径时不认中文（软件放在中文文件夹里就会崩溃），
     // 所以把工作目录切到模型所在的文件夹，只传模型文件名；音频从标准输入喂进去，不传路径。
     // -ml 1：逐词输出时间戳，后面按真实时间断句
-    const args = ['-m', path.basename(model), '-f', '-', '-l', s.asr.language || 'zh', '-t', String(s.asr.threads || 8), '-ml', '1', '-oj', '-of', outBase, '-pp'];
+    const args = ['-m', path.basename(model), '-f', '-', '-l', s.asr.language || 'zh', '-t', String(asrThreads(s, 16)), '-ml', '1', '-oj', '-of', outBase, '-pp'];
     const prompt = PROMPTS[s.asr.language];
     if (prompt) args.push('--prompt', prompt);
     onProgress?.(0.05, '识别语音');

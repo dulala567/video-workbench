@@ -45,7 +45,7 @@ async function run(checkEnv) {
     if (!env.ffmpeg) throw new Error('找不到 ffmpeg');
     if (!env.whisper) throw new Error('找不到 whisper-cli');
     if (!env.whisperModel) throw new Error('找不到识别模型 ' + env.whisperModelPath);
-    return { env: { ...env, lipsync: undefined }, exe: process.execPath, ffmpeg: paths.ffmpeg(), whisper: paths.whisper(), fontsDir: paths.fontsDir };
+    return { env: { ...env, lipsync: undefined }, cpus: require('os').cpus().length, exe: process.execPath, ffmpeg: paths.ffmpeg(), whisper: paths.whisper(), fontsDir: paths.fontsDir };
   });
 
   // 文件名带中文和空格，顺便测路径

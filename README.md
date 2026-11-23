@@ -40,7 +40,9 @@ GitHub 私有仓库 `dulala567/video-workbench` 的 Actions（`.github/workflows
 - Windows 的 NVIDIA 驱动在显存满时会用内存顶替显存（不报错，慢一个数量级），所以「显存不够」表现为极慢而不是失败；生成进度里显存剩余 <0.5GB 时会提示关掉其他占显卡的程序。
 - 中文路径（v0.1.1）：whisper-cli（`b5907`）在 Windows 上读模型路径时按 UTF-8 转码，而命令行参数是系统编码，软件放在中文文件夹里就崩溃（退出码 3221226505）。现在把工作目录切到模型文件夹、只传文件名，音频走标准输入。云端自检改成在带中文和空格的文件夹里跑。
 - 数字人进度（v0.1.1）：Windows 上 Python 输出行尾是 `\r\n`，原来的进度行正则匹配不上，任务一直显示「准备中」。
-- 升级补丁：每次打包另出 `VideoWorkbench-patch-v<版本>.zip`（`resources/app.asar` + `resources/engines/lipsync_runner.py`，几 MB），覆盖到已解压的完整包里即可升级；Python 环境或模型有变化时补丁不够，要重新下完整包。
+- 升级补丁：每次打包另出 `VideoWorkbench-patch-v<版本>.zip`（`resources/` 下的 app.asar、口型脚本、TAESD、sherpa-onnx、SenseVoice，约 200MB），覆盖到已解压的完整包里即可升级；Python 环境或大模型有变化时补丁不够，要重新下完整包。
+- 快速识别（v0.1.2）：sherpa-onnx `2.0.3` 的静态链接版 `sherpa-onnx-offline.exe` + SenseVoice int8 模型（`…int8-2024-07-17`，约 230MB，FunASR 模型许可）。不用显卡。长音频在 Node 里按 20ms 一帧算音量，在 8~28 秒之间最长的停顿处切段（切在字中间会识别错），逐段识别后把逐字时间加上段起点。只支持中/英/日/韩/粤，其他语言或出错时退回 whisper。Windows 上通过「临时目录里建一个指向模型文件夹的目录联接 + 相对路径」避开中文路径问题。Mac 开发环境默认没装，仍用 whisper；要试可设环境变量 `VW_SHERPA`、`VW_SENSEVOICE_DIR`。
+- 没做「whisper 用显卡」：whisper.cpp 的 CUDA 版要多带 1.3GB 文件（ggml-cuda.dll 681MB、cublasLt 473MB 等），而 SenseVoice 在 CPU 上已经比它需要的快，所以没带。
 - 口型脚本的 Windows 适配：中间文件用 libx264 编码（Mac 用 VideoToolbox）；OpenCV 的 `imread/imwrite` 不认中文路径，换成读字节后解码；背景视频改用 ffmpeg 管道解码（`cv2.VideoCapture` 同样不认中文路径）。
 - 字幕字体：Mac 字体在 Windows 上换成宋体/楷体/黑体或自带的思源黑体；字幕滤镜在临时目录里用相对路径，字体目录参数转义盘符冒号。
 - 硬件编码：Windows 依次试 NVENC / QSV / AMF（真编一小段成功才用），否则 x264。
@@ -100,6 +102,12 @@ GitHub 私有仓库 `dulala567/video-workbench` 的 Actions（`.github/workflows
 
 ## 已知限制
 
+- 提速实测（v0.1.2，Mac M4 Max）：
+  - 数字人生成，1080×1920 形象 + 换背景，250 帧：原来 28.2 秒（8.9 帧/秒）→ 多线程收尾后 18.8 秒（13.3 帧/秒），两版画面 PSNR 50dB。耗时拆解（原版）：VAE 解码 13.0 秒、UNet 6.0 秒、贴回原图 4.3 秒、其余约 5 秒；贴回原图单帧 16.8ms → 1.7ms，换背景合成 8.9ms → 0.4ms。
+  - 快速模式（TAESD 解码）：736×1308 照片形象 250 帧，18.6 秒 → 6.6 秒（约 38 帧/秒）。画质：动漫风格测试图上嘴唇边缘明显变软；真人素材没对比过，所以默认关闭。
+  - 快速识别：18 秒中文语音，SenseVoice 0.17 秒（CPU 4 线程），whisper large-v3-turbo 1.1 秒（Mac 显卡）；同一段语音 SenseVoice 全对，whisper 把「烧录」识别成「稍录」；混入背景音乐后两者结果不变。只测了这一段合成语音，真人录音的准确率没系统比过。
+  - CPU 编码 20 秒 1080×1920：medium 1.33 秒，veryfast 0.72 秒（测试画面是合成图案，真实视频的差距可能不同）。
+  - 以上都是 Mac 上的数字；NVIDIA 显卡上的数字人速度没实测。
 - Windows 版（含数字人）ZIP 约 7.8GB，其中数字人引擎约 8.8GB（解压后），显卡版 PyTorch 约 4.9GB。云电脑（4 核、无显卡）上用 CPU 跑 3 秒照片对口型 + 换背景用了 18.5 分钟（含加载模型和首次分析形象），能出片但没有实用价值，真实使用要靠 NVIDIA 显卡；显卡上的速度没实测。
 - Windows 版只在 GitHub 的 Windows Server 云电脑上自检过，没在真实的 Windows 10/11 个人电脑上跑过；NVIDIA/Intel/AMD 硬件编码因为云电脑没有显卡，都没实测（检测失败会自动退回 CPU 编码）。云电脑上 18 秒中文语音识别用了 40 秒（4 核 CPU）。
 - Windows 版没有微软代码签名，第一次打开会弹「Windows 已保护你的电脑」，要点「更多信息 → 仍要运行」。
