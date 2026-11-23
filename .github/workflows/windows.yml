@@ -15,6 +15,9 @@ env:
   # 显卡版 PyTorch（CUDA 12.8，支持 RTX 50 系），安装包自带 CUDA 运行库，用户只要装 NVIDIA 驱动
   TORCH_INDEX: https://download.pytorch.org/whl/cu128
   TORCH_PKGS: torch==2.8.0 torchvision==0.23.0
+  # 快速识别：sherpa-onnx（静态链接版，单个 exe，不依赖 VC 运行库）+ SenseVoice 小模型
+  SHERPA_VER: 2.0.3
+  SENSEVOICE: sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17
 
 jobs:
   build:
@@ -73,6 +76,41 @@ jobs:
           Get-ChildItem win-resources -Recurse | Select-Object FullName, Length | Format-Table -AutoSize
           & win-resources/bin/ffmpeg.exe -hide_banner -version | Select-Object -First 1
           & win-resources/bin/whisper-cli.exe --help 2>&1 | Select-Object -First 3
+
+      - name: 缓存快速识别（程序 + 模型）
+        id: sv-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            app/win-resources/sherpa
+            app/win-resources/models/sensevoice
+          key: sensevoice-${{ env.SHERPA_VER }}-${{ env.SENSEVOICE }}
+
+      - name: 下载快速识别
+        if: steps.sv-cache.outputs.cache-hit != 'true'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dl = "$env:RUNNER_TEMP/dl"
+          $tar = "$env:SystemRoot/System32/tar.exe"
+          New-Item -ItemType Directory -Force win-resources/sherpa, win-resources/models/sensevoice, "$dl/sherpa", "$dl/sv" | Out-Null
+          curl.exe -L --fail --retry 3 -o "$dl/sherpa.tar.bz2" "https://github.com/k2-fsa/sherpa-onnx/releases/download/v$env:SHERPA_VER/sherpa-onnx-v$env:SHERPA_VER-win-x64-static-MT-Release-no-tts.tar.bz2"
+          if ($LASTEXITCODE) { throw 'sherpa-onnx 下载失败' }
+          & $tar -xjf "$dl/sherpa.tar.bz2" -C "$dl/sherpa" "*/bin/sherpa-onnx-offline.exe"
+          $exe = Get-ChildItem "$dl/sherpa" -Recurse -Filter sherpa-onnx-offline.exe | Select-Object -First 1
+          if (-not $exe) { throw '压缩包里没找到 sherpa-onnx-offline.exe' }
+          Copy-Item $exe.FullName win-resources/sherpa/
+          curl.exe -L --fail --retry 3 -o "$dl/sv.tar.bz2" "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/$env:SENSEVOICE.tar.bz2"
+          if ($LASTEXITCODE) { throw 'SenseVoice 模型下载失败' }
+          & $tar -xjf "$dl/sv.tar.bz2" -C "$dl/sv"
+          foreach ($f in 'model.int8.onnx', 'tokens.txt', 'LICENSE', 'README.md') { Copy-Item "$dl/sv/$env:SENSEVOICE/$f" win-resources/models/sensevoice/ }
+          $want = @{ 'model.int8.onnx' = 'c71f0ce00bec95b07744e116345e33d8cbbe08cef896382cf907bf4b51a2cd51'; 'tokens.txt' = 'f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc' }
+          foreach ($k in $want.Keys) { $h = (Get-FileHash "win-resources/models/sensevoice/$k" -Algorithm SHA256).Hash.ToLower(); if ($h -ne $want[$k]) { throw "$k 校验不对：$h" } }
+
+      - name: 检查快速识别程序
+        run: |
+          Get-ChildItem win-resources/sherpa, win-resources/models/sensevoice | Select-Object Name, Length | Format-Table -AutoSize
+          & win-resources/sherpa/sherpa-onnx-offline.exe --help 2>&1 | Select-Object -First 3
+          exit 0
 
       - name: 数字人 Python 环境（自带 Python 3.11 + 显卡版 PyTorch）
         run: |
@@ -149,6 +187,15 @@ jobs:
           Get-ChildItem "$env:RUNNER_TEMP/MuseTalk" -Force -Exclude .git, models, assets | Copy-Item -Destination "$e/MuseTalk" -Recurse -Force
           Copy-Item "$env:RUNNER_TEMP/RVM/model", "$env:RUNNER_TEMP/RVM/LICENSE" "$e/RobustVideoMatting" -Recurse -Force
           Copy-Item ../engines/lipsync_runner.py $e/
+          # 快速模式用的小型解码模型 TAESD（约 10MB，MIT 许可）
+          $t = "$e/MuseTalk/models/taesd"
+          New-Item -ItemType Directory -Force $t | Out-Null
+          $want = @{ 'config.json' = '3ebefd1aa96ac474cc6430fe6ea81febccf7ee82461715691ee9315c884adeef'; 'diffusion_pytorch_model.safetensors' = 'db169d69145ec4ff064e49d99c95fa05d3eb04ee453de35824a6d0f325513549' }
+          foreach ($k in $want.Keys) {
+            curl.exe -L --fail --retry 3 -o "$t/$k" "https://huggingface.co/madebyollin/taesd/resolve/main/$k"
+            if ($LASTEXITCODE) { throw "TAESD $k 下载失败" }
+            $h = (Get-FileHash "$t/$k" -Algorithm SHA256).Hash.ToLower(); if ($h -ne $want[$k]) { throw "TAESD $k 校验不对：$h" }
+          }
           Get-ChildItem $e -Depth 1 | Select-Object FullName | Format-Table -AutoSize
           "数字人引擎合计 {0:N2} GB" -f ((Get-ChildItem $e -Recurse -File | Measure-Object Length -Sum).Sum / 1GB)
 
@@ -180,13 +227,17 @@ jobs:
             ${{ runner.temp }}/selftest/*.png
           if-no-files-found: warn
 
-      - name: 升级补丁（只含改动的程序文件，给已经装过完整包的人用）
+      - name: 升级补丁（程序文件 + 新加的小模型，给已经装过完整包的人用）
         run: |
           $ver = (Get-Content package.json -Raw | ConvertFrom-Json).version
           $name = "VideoWorkbench-patch-v$ver"
-          New-Item -ItemType Directory -Force "release/$name/resources/engines" | Out-Null
-          Copy-Item release/win-unpacked/resources/app.asar "release/$name/resources/"
-          Copy-Item ../engines/lipsync_runner.py "release/$name/resources/engines/"
+          $r = "release/$name/resources"
+          New-Item -ItemType Directory -Force "$r/engines/MuseTalk/models", "$r/models" | Out-Null
+          Copy-Item release/win-unpacked/resources/app.asar "$r/"
+          Copy-Item ../engines/lipsync_runner.py "$r/engines/"
+          Copy-Item win-resources/engines/MuseTalk/models/taesd "$r/engines/MuseTalk/models/" -Recurse
+          Copy-Item win-resources/sherpa "$r/" -Recurse
+          Copy-Item win-resources/models/sensevoice "$r/models/" -Recurse
           Copy-Item ci/Patch-ReadMe.txt "release/$name/ReadMe.txt"
           7z a -tzip -mx=7 "release/$name.zip" "./release/$name/*"
           "PATCH_NAME=$name" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8

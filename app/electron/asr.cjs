@@ -10,15 +10,177 @@ const PROMPTS = {
   zh: '以下是普通话的句子，使用简体中文。',
 };
 
-async function transcribe(file, { signal, onProgress } = {}) {
+// ---------- 快速识别：SenseVoice ----------
+// 阿里开源的小型语音识别模型（约 230MB），不用显卡，在 CPU 上就比 whisper 快一到两个数量级，中文准确、自带标点和逐字时间。
+// 只支持中文、英文、日文、韩文、粤语；其他语言、或者它没装好/出错时，退回 whisper。
+const SV_LANGS = ['zh', 'en', 'ja', 'ko', 'yue'];
+const SR = 16000;
+
+function pickEngine(s) {
+  if ((s.asr.engine || 'auto') === 'whisper') return 'whisper';
+  if (!SV_LANGS.includes(s.asr.language || 'zh')) return 'whisper';
+  return paths.sherpa() && paths.senseVoiceDir() ? 'sensevoice' : 'whisper';
+}
+
+// 模型一次最多处理 30 秒，长音频要切段。切在停顿处（切在字中间会识别错），每段 8~28 秒。
+// 返回切点（采样点位置）。samples 是 16k 单声道 Int16Array。
+function planCuts(samples, { minSec = 8, maxSec = 28 } = {}) {
+  const FRAME = 320; // 20 毫秒
+  const n = Math.floor(samples.length / FRAME);
+  const maxF = maxSec * 50;
+  if (n <= maxF) return [];
+  const rms = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    let sum = 0;
+    for (let j = i * FRAME, e = j + FRAME; j < e; j++) sum += samples[j] * samples[j];
+    rms[i] = Math.sqrt(sum / FRAME);
+  }
+  // 安静的标准：底噪和说话音量之间靠近底噪的位置
+  const sorted = Float32Array.from(rms).sort();
+  const floor = sorted[Math.floor(n * 0.1)];
+  const speech = sorted[Math.floor(n * 0.9)];
+  const thr = floor + 0.15 * (speech - floor);
+  const cuts = [];
+  let start = 0;
+  while (n - start > maxF) {
+    const lo = start + minSec * 50;
+    const hi = start + maxF;
+    // 找这一段里最长的一处停顿，切在它中间
+    let best = null;
+    for (let i = lo; i < hi; ) {
+      if (rms[i] > thr) {
+        i++;
+        continue;
+      }
+      let j = i;
+      while (j < hi && rms[j] <= thr) j++;
+      if (!best || j - i >= best.len) best = { at: Math.floor((i + j) / 2), len: j - i };
+      i = j;
+    }
+    let cut;
+    if (best && best.len >= 4) cut = best.at;
+    else {
+      // 没有像样的停顿（比如一直有背景音乐）：在靠后的位置找声音最小的一帧
+      cut = hi - 1;
+      for (let i = Math.floor(start + maxF * 0.7); i < hi; i++) if (rms[i] < rms[cut]) cut = i;
+    }
+    cuts.push(cut * FRAME);
+    start = cut;
+  }
+  return cuts;
+}
+
+function wavHeader(dataBytes) {
+  const h = Buffer.alloc(44);
+  h.write('RIFF', 0);
+  h.writeUInt32LE(36 + dataBytes, 4);
+  h.write('WAVEfmt ', 8);
+  h.writeUInt32LE(16, 16);
+  h.writeUInt16LE(1, 20); // PCM
+  h.writeUInt16LE(1, 22); // 单声道
+  h.writeUInt32LE(SR, 24);
+  h.writeUInt32LE(SR * 2, 28);
+  h.writeUInt16LE(2, 32);
+  h.writeUInt16LE(16, 34);
+  h.write('data', 36);
+  h.writeUInt32LE(dataBytes, 40);
+  return h;
+}
+
+// 一段的识别结果（逐字 + 时间）→ 和 whisper 逐词输出同样形状的片段
+function svPieces(result, offsetSec, chunkSec) {
+  const tokens = result.tokens || [];
+  const ts = result.timestamps || [];
+  const out = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const text = String(tokens[i]).replace(/▁/g, ' ');
+    if (!text || /^<\|.*\|>$/.test(text)) continue;
+    const start = ts[i] ?? (out.length ? out[out.length - 1].end - offsetSec : 0);
+    const next = ts[i + 1] ?? Math.min(chunkSec, start + 0.3);
+    out.push({ start: offsetSec + start, end: offsetSec + Math.max(start + 0.05, Math.min(next, start + 0.6)), text });
+  }
+  return out;
+}
+
+async function transcribeSenseVoice(file, tmp, s, { signal, onProgress } = {}) {
+  const pcmFile = path.join(tmp, 'a.pcm');
+  onProgress?.(0, '提取音频');
+  await ffmpeg(['-i', file, '-vn', '-ac', '1', '-ar', String(SR), '-f', 's16le', '-c:a', 'pcm_s16le', pcmFile], { signal });
+  const buf = fs.readFileSync(pcmFile);
+  const samples = new Int16Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + (buf.length & ~1)));
+  if (samples.length < SR * 0.2) return [];
+  const bounds = [0, ...planCuts(samples), samples.length];
+  const chunks = [];
+  for (let i = 0; i + 1 < bounds.length; i++) {
+    const name = `c${String(i).padStart(4, '0')}.wav`;
+    const data = Buffer.from(samples.buffer, bounds[i] * 2, (bounds[i + 1] - bounds[i]) * 2);
+    fs.writeFileSync(path.join(tmp, name), Buffer.concat([wavHeader(data.length), data]));
+    chunks.push({ name, offset: bounds[i] / SR, dur: (bounds[i + 1] - bounds[i]) / SR });
+  }
+
+  // 识别程序在 Windows 上不一定认中文路径（软件常被放在中文文件夹里）。
+  // 在临时目录里建一个指向模型文件夹的链接，工作目录设成临时目录，这样传给它的全是不带中文的相对路径。
+  const link = path.join(tmp, 'm');
+  fs.symlinkSync(paths.senseVoiceDir(), link, 'junction');
+  try {
+    const lang = s.asr.language || 'zh';
+    const base = ['--sense-voice-model=m/model.int8.onnx', '--tokens=m/tokens.txt', `--num-threads=${Math.max(1, Math.min(8, s.asr.threads || 4))}`, '--sense-voice-use-itn=true', `--sense-voice-language=${lang}`];
+    const pieces = [];
+    const GROUP = 16; // 一次喂 16 段（约 5 分钟），好回报进度
+    for (let g = 0; g < chunks.length; g += GROUP) {
+      const part = chunks.slice(g, g + GROUP);
+      onProgress?.(0.05 + 0.95 * (g / chunks.length), '识别语音');
+      let out = '';
+      let err = '';
+      await runProcess(paths.sherpa(), [...base, ...part.map((c) => c.name)], { signal, cwd: tmp, onStdout: (t) => (out += t), onStderr: (t) => (err += t) });
+      // 每个文件一行 JSON，顺序和传入的文件一致
+      const results = (out + '\n' + err)
+        .split(/\r?\n/)
+        .filter((l) => l.startsWith('{') && l.includes('"timestamps"'))
+        .map((l) => JSON.parse(l));
+      if (results.length !== part.length) throw new Error(`快速识别返回 ${results.length} 段结果，应为 ${part.length} 段`);
+      results.forEach((r, i) => pieces.push(...svPieces(r, part[i].offset, part[i].dur)));
+    }
+    return pieces;
+  } finally {
+    // 只删链接本身，不能连模型一起删
+    try {
+      if (process.platform === 'win32') fs.rmdirSync(link);
+      else fs.unlinkSync(link);
+    } catch {}
+  }
+}
+
+async function transcribe(file, opts = {}) {
   const s = store.getSettings();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vw-asr-'));
+  try {
+    if (pickEngine(s) === 'sensevoice') {
+      try {
+        return await transcribeSenseVoice(file, tmp, s, opts);
+      } catch (e) {
+        if (opts.signal?.aborted) throw e;
+        console.error('快速识别失败，改用 whisper：', e);
+      }
+    }
+    return await transcribeWhisper(file, tmp, s, opts);
+  } finally {
+    // 链接还在的话先摘掉，再删临时目录（防止删到模型文件夹里去）
+    const link = path.join(tmp, 'm');
+    try {
+      if (fs.lstatSync(link)) process.platform === 'win32' ? fs.rmdirSync(link) : fs.unlinkSync(link);
+    } catch {}
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+async function transcribeWhisper(file, tmp, s, { signal, onProgress } = {}) {
   const model = store.whisperModel();
   if (!fs.existsSync(model)) throw new Error('识别模型不存在：' + model + '（设置里可以改路径）');
   const whisper = paths.whisper();
   if (!whisper) throw new Error('没找到 whisper-cli，请先 brew install whisper-cpp');
 
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vw-asr-'));
-  try {
+  {
     const wav = path.join(tmp, 'a.wav');
     onProgress?.(0, '提取音频');
     await ffmpeg(['-i', file, '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', wav], { signal });
@@ -51,8 +213,6 @@ async function transcribe(file, { signal, onProgress } = {}) {
     return (j.transcription || [])
       .map((x) => ({ start: x.offsets.from / 1000, end: x.offsets.to / 1000, text: zh ? toZhPunct(x.text.trim()) : x.text.trim() }))
       .filter((x) => x.text && !/^\[.*\]$/.test(x.text) && !x.text.includes('�'));
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
   }
 }
 
@@ -292,4 +452,4 @@ function parseSrt(text) {
     .filter((x) => x && x.text);
 }
 
-module.exports = { transcribe, toSubtitleLines, toSrt, parseSrt, toPlainText };
+module.exports = { transcribe, toSubtitleLines, toSrt, parseSrt, toPlainText, pickEngine, planCuts };

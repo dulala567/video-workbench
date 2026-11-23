@@ -120,12 +120,25 @@ export default function Settings({ onClose }: { onClose: () => void }) {
             </div>
           </div>
           <div className="set-row">
+            <label>识别引擎</label>
+            <div>
+              <select className="input" value={s.asr.engine || 'auto'} onChange={(e) => set('asr', { engine: e.target.value })}>
+                <option value="auto">自动（有快速识别就用，快很多）</option>
+                <option value="whisper">Whisper（慢，支持的语言多）</option>
+              </select>
+              <div className="desc">
+                快速识别用的是 SenseVoice 小模型：不用显卡，速度比 Whisper 快很多，支持中文、英文、日文。
+                {env && !env.senseVoice && ' 这台电脑上没装快速识别，现在用的是 Whisper。'}
+              </div>
+            </div>
+          </div>
+          <div className="set-row">
             <label>模型文件</label>
             <div>
               <div className="row">
                 <input className="input grow" placeholder="留空使用内置 large-v3-turbo" value={s.asr.model} onChange={(e) => set('asr', { model: e.target.value })} />
               </div>
-              <div className="desc">whisper.cpp 的 ggml 模型文件路径，一般不用改</div>
+              <div className="desc">Whisper 用的 ggml 模型文件路径，一般不用改</div>
             </div>
           </div>
           <div className="set-row">
@@ -183,6 +196,13 @@ export default function Settings({ onClose }: { onClose: () => void }) {
             </div>
           </div>
           <div className="set-row">
+            <label>快速模式</label>
+            <div>
+              <Toggle on={!!s.lipsync.fastDecode} onChange={(v) => set('lipsync', { fastDecode: v })} />
+              <div className="desc">用小型解码模型生成嘴部画面，速度明显更快，嘴部细节（牙齿、唇纹）会略软一点。先用同一段素材开/关各生成一条对比，能接受再常开</div>
+            </div>
+          </div>
+          <div className="set-row">
             <label>嘴部区域偏移</label>
             <div>
               <input className="input" type="number" min={-20} max={20} value={s.lipsync.bboxShift} onChange={(e) => set('lipsync', { bboxShift: +e.target.value })} style={{ width: 80 }} />
@@ -199,6 +219,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
                   [env.gpuEncodeName || '硬件编码（没有就用 CPU）', env.gpuEncode],
                   ['whisper-cli', env.whisper],
                   ['识别模型', env.whisperModel],
+                  ...(env.senseVoice || IS_WIN ? [['快速识别（SenseVoice）', !!env.senseVoice]] : []),
                   ['数字人 Python 环境', env.lipsync.python],
                   ['数字人模型权重', env.lipsync.weights],
                   ['数字人口型脚本', env.lipsync.runner],

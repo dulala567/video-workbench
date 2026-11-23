@@ -1,7 +1,7 @@
 {
   "name": "video-workbench",
   "productName": "视频工作台",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "main": "electron/main.cjs",
@@ -59,6 +59,10 @@
       {
         "from": "win-resources/engines",
         "to": "engines"
+      },
+      {
+        "from": "win-resources/sherpa",
+        "to": "sherpa"
       }
     ],
     "npmRebuild": false,

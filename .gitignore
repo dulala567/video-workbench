@@ -12,3 +12,5 @@ app/win-resources/
 发布包/
 __pycache__/
 *.pyc
+engines/sherpa-onnx/
+engines/sensevoice/

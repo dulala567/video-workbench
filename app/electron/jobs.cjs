@@ -42,7 +42,8 @@ function videoCodecArgs() {
   const s = store.getSettings();
   const crf = Number(s.encode.quality) || 20;
   const hw = hwEncoder();
-  if (s.encode.encoder === 'x264' || !hw) return x264Args(crf);
+  if (s.encode.encoder === 'x264') return x264Args(crf); // 用户特意选的软件编码：保持 medium，求清晰
+  if (!hw) return x264Args(crf, 'veryfast'); // 没有硬件编码只能用 CPU：用快档，实测快近一倍，画质差别很小
   return hw.args(crf);
 }
 

@@ -91,6 +91,7 @@ async function checkEnv() {
     whisper: !!paths.whisper(),
     whisperModel: fs.existsSync(model),
     whisperModelPath: model,
+    senseVoice: !!(paths.sherpa() && paths.senseVoiceDir()),
     lipsync: lipsync.status(),
     gpu: await lipsync.detectGpu(),
     disk,

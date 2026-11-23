@@ -112,6 +112,7 @@ async function handler(job, ctx) {
   try {
     // 1. 口型
     const args = [paths.lipsyncRunner, '--avatar', av.file, '--cache', av.cacheDir, '--audio', audio, '--out', raw, '--bbox-shift', String(s.lipsync.bboxShift || 0)];
+    if (s.lipsync.fastDecode && fs.existsSync(path.join(paths.museTalk, 'models', 'taesd', 'config.json'))) args.push('--fast-decode');
     if (bg?.mode && bg.mode !== 'off' && bg.files?.length) args.push('--bg', bg.mode === 'fixed' ? bg.files[0] : pick(bg.files));
     let buf = '';
     // 口型脚本的运行记录（用的什么显卡、显存、每批几帧、报错）存一份，出问题时好查

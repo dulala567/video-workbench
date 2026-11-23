@@ -160,6 +160,6 @@ function detectHwEncoder() {
   return hwPromise;
 }
 const hwEncoder = () => hw;
-const x264Args = (crf) => ['-c:v', 'libx264', '-preset', 'medium', '-crf', String(crf), '-pix_fmt', 'yuv420p'];
+const x264Args = (crf, preset = 'medium') => ['-c:v', 'libx264', '-preset', preset, '-crf', String(crf), '-pix_fmt', 'yuv420p'];
 
 module.exports = { runProcess, probe, ffmpeg, filterPath, detectHwEncoder, hwEncoder, x264Args };

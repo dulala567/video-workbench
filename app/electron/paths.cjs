@@ -52,6 +52,18 @@ function defaultWhisperModel() {
   return path.join(ENGINES_DIR, 'whisper', 'ggml-large-v3-turbo.bin');
 }
 
+// 快速识别（SenseVoice，通过 sherpa-onnx 运行）：程序和模型。Windows 打包版自带；
+// 开发时可以用环境变量 VW_SHERPA / VW_SENSEVOICE_DIR 指过去，或放在 engines/sherpa-onnx、engines/sensevoice。
+function sherpaBin() {
+  const exe = IS_WIN ? 'sherpa-onnx-offline.exe' : 'sherpa-onnx-offline';
+  const cands = [process.env.VW_SHERPA, resDir('sherpa') && path.join(resDir('sherpa'), exe), path.join(ENGINES_DIR, 'sherpa-onnx', 'bin', exe)];
+  return cands.find((p) => p && fs.existsSync(p)) || null;
+}
+function senseVoiceDir() {
+  const cands = [process.env.VW_SENSEVOICE_DIR, resDir('models') && path.join(resDir('models'), 'sensevoice'), path.join(ENGINES_DIR, 'sensevoice')];
+  return cands.find((p) => p && fs.existsSync(path.join(p, 'model.int8.onnx')) && fs.existsSync(path.join(p, 'tokens.txt'))) || null;
+}
+
 const paths = {
   isWin: IS_WIN,
   projectRoot: PROJECT_ROOT,
@@ -59,6 +71,8 @@ const paths = {
   ffmpeg: () => which('ffmpeg'),
   ffprobe: () => which('ffprobe'),
   whisper: () => which('whisper-cli'),
+  sherpa: sherpaBin,
+  senseVoiceDir,
   defaultWhisperModel: defaultWhisperModel(),
   fontsDir: resDir('fonts'), // 安装包自带的字幕字体（Windows 版带思源黑体）
   python: BUNDLED_ENGINES ? path.join(ENGINES_DIR, 'python', IS_WIN ? 'python.exe' : 'bin/python3') : path.join(ENGINES_DIR, '.venv', 'bin', 'python'),

@@ -15,6 +15,8 @@ for f in ["config.json","diffusion_pytorch_model.bin"]:
     d("stabilityai/sd-vae-ft-mse", f, local_dir="models/sd-vae")
 for f in ["config.json","pytorch_model.bin","preprocessor_config.json"]:
     d("openai/whisper-tiny", f, local_dir="models/whisper")
+for f in ["config.json","diffusion_pytorch_model.safetensors"]:
+    d("madebyollin/taesd", f, local_dir="models/taesd")  # 快速模式用的小型解码模型
 print("HF done")
 PY
 gdown "https://drive.google.com/uc?id=154JgKpzCPW82qINcVieuPH3fZ2e0P812" -O $M/face-parse-bisent/79999_iter.pth || echo GDOWN_FAIL

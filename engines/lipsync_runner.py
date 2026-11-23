@@ -15,10 +15,13 @@ import argparse
 import json
 import os
 import pickle
+import queue
 import shutil
 import subprocess
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import cv2
 import numpy as np
@@ -386,6 +389,42 @@ class Background:
         return f
 
 
+def make_fast_decoder(device, dtype):
+    """快速模式：用小型解码模型 TAESD（约 10MB）代替原版 VAE 把结果还原成画面。
+    原版解码占生成时间将近一半，换成它快很多，画面细节略软一点。"""
+    from diffusers import AutoencoderTiny
+
+    tiny = AutoencoderTiny.from_pretrained(os.path.join("models", "taesd")).to(dtype=dtype).to(device).eval()
+    tiny.requires_grad_(False)
+
+    def decode(latents):
+        img = tiny.decode(latents.to(dtype)).sample
+        img = (img / 2 + 0.5).clamp(0, 1)
+        img = img.detach().cpu().permute(0, 2, 3, 1).float().numpy()
+        return (img * 255).round().astype("uint8")[..., ::-1]  # 和原版一样返回 BGR
+
+    return decode
+
+
+def blend_face(frame, face, face_box, mask, crop_box):
+    """把生成的嘴部贴回原图（直接改 frame）。
+    结果和 MuseTalk 的 get_image_blending 一样（差别不超过 1 个色阶），
+    但只算人脸附近那一块，不把整张 1080p 的图在 PIL 和 numpy 之间来回转，快很多。"""
+    h, w = frame.shape[:2]
+    x, y, x1, y1 = face_box
+    xs, ys, xe, ye = crop_box
+    cx0, cy0, cx1, cy1 = max(xs, 0), max(ys, 0), min(xe, w), min(ye, h)  # 融合区域（裁到画面内）
+    if cx1 <= cx0 or cy1 <= cy0:
+        return
+    region = frame[cy0:cy1, cx0:cx1]
+    large = region.copy()
+    fx0, fy0, fx1, fy1 = max(x, cx0), max(y, cy0), min(x1, cx1), min(y1, cy1)  # 嘴部贴入的位置
+    if fx1 > fx0 and fy1 > fy0:
+        large[fy0 - cy0 : fy1 - cy0, fx0 - cx0 : fx1 - cx0] = face[fy0 - y : fy1 - y, fx0 - x : fx1 - x]
+    m = mask[cy0 - ys : cy1 - ys, cx0 - xs : cx1 - xs].astype(np.uint16)[..., None]
+    region[:] = ((large.astype(np.uint16) * m + region.astype(np.uint16) * (255 - m) + 127) // 255).astype(np.uint8)
+
+
 # ---------------------------------------------------------------- 生成
 def main():
     ap = argparse.ArgumentParser()
@@ -397,6 +436,7 @@ def main():
     ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--bg", default=None, help="（预留）替换背景")
     ap.add_argument("--fp32", action="store_true", help="用 float32（更慢，半精度出问题时用）")
+    ap.add_argument("--fast-decode", action="store_true", help="快速模式：用小型解码模型，速度快、细节略软")
     args = ap.parse_args()
     for k in ("avatar", "cache", "audio", "out", "bg"):
         if getattr(args, k):
@@ -421,7 +461,6 @@ def main():
     from musetalk.utils.utils import load_all_model
     from musetalk.utils.audio_processor import AudioProcessor
     from musetalk.utils.face_parsing import FaceParsing
-    from musetalk.utils.blending import get_image_blending
 
     # 模型先在内存里转成半精度，再放进显卡。
     # 原版是先按全精度放进显卡再转，加载那一下要多占 3GB 多显存，6GB/8GB 的显卡容易被挤满。
@@ -495,23 +534,82 @@ def main():
     frame_cache = {}
 
     def load(idx):
-        if idx not in frame_cache:
-            if len(frame_cache) > 64:
-                frame_cache.clear()
-            alpha = None
+        v = frame_cache.get(idx)
+        if v is None:
+            alpha = inv = None
             if alpha_dir:
-                alpha = cv2.imread(os.path.join(alpha_dir, f"{idx:08d}.png"), cv2.IMREAD_GRAYSCALE).astype(np.float32)[..., None] / 255.0
-            frame_cache[idx] = (
+                alpha = cv2.imread(os.path.join(alpha_dir, f"{idx:08d}.png"), cv2.IMREAD_GRAYSCALE).astype(np.float32) / 255.0
+                inv = 1.0 - alpha
+            v = (
                 cv2.imread(os.path.join(frame_dir, f"{idx:08d}.jpg")),
                 cv2.imread(os.path.join(mask_dir, f"{idx:08d}.png"), cv2.IMREAD_GRAYSCALE),
                 alpha,
+                inv,
             )
-        return frame_cache[idx]
+            if len(frame_cache) > 64:
+                frame_cache.clear()
+            frame_cache[idx] = v
+        return v
 
+    def compose(idx, face, bg_frame):
+        """一帧的收尾：把嘴贴回原图、换背景。在工作线程里跑。"""
+        frame, mask, alpha, inv = load(idx)
+        out = frame.copy()
+        x1, y1, x2, y2 = coords[idx]
+        face = cv2.resize(np.ascontiguousarray(face).astype(np.uint8), (x2 - x1, y2 - y1))
+        blend_face(out, face, coords[idx], mask, mask_coords[idx])
+        if bg_frame is not None:
+            out = cv2.blendLinear(out, np.ascontiguousarray(bg_frame), alpha, inv)
+        return np.ascontiguousarray(out)
+
+    # 显卡负责算嘴型；贴回原图、换背景、送去编码这些 CPU 活放到另外的线程里同时做，显卡不用等。
     t1 = time.time()
     done = 0
+    todo = queue.Queue(maxsize=2)  # 最多攒 2 批，免得内存涨
+    failed = []
+    workers = max(2, min(8, (os.cpu_count() or 4) // 2))
+
+    def finisher():
+        nonlocal done
+        try:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                while True:
+                    item = todo.get()
+                    if item is None:
+                        return
+                    idxs, recon = item
+                    bgs = [bg.next() if bg is not None else None for _ in idxs]  # 背景帧要按顺序取
+                    for out in pool.map(compose, idxs, recon, bgs):
+                        enc.stdin.write(out)
+                    done += len(idxs)
+                    el = time.time() - t1
+                    progress(0.33 + 0.65 * done / total, f"生成口型 {done}/{total} 帧 · {done / max(el, 1e-3):.1f} 帧/秒" + speed_note(device, gpu_free_gb(device)))
+        except Exception as e:
+            failed.append(e)
+
+    th = threading.Thread(target=finisher, daemon=True)
+    th.start()
+
+    def hand_over(item):
+        while True:
+            if failed:
+                raise failed[0]
+            try:
+                todo.put(item, timeout=0.5)
+                return
+            except queue.Full:
+                pass
+
+    decode = vae.decode_latents
+    if args.fast_decode:
+        try:
+            decode = make_fast_decoder(device, dtype)
+            log("快速模式：用小型解码模型")
+        except Exception as e:
+            log("快速模式用不了，改回原版解码：", e)
+
     bs = pick_batch_size(args.batch_size, gpu_free_gb(device))
-    log(f"每批 {bs} 帧")
+    log(f"每批 {bs} 帧，{workers} 个线程收尾")
     with torch.no_grad():
         s = 0
         while s < total:
@@ -521,7 +619,7 @@ def main():
                 lb = latents[idxs].to(device=device, dtype=dtype)
                 audio_feat = pe(wb)
                 pred = unet.model(lb, timesteps, encoder_hidden_states=audio_feat).sample
-                recon = vae.decode_latents(pred)
+                recon = decode(pred)
             except RuntimeError as e:
                 # 显存不够：一批少算一半再试，减到 1 帧还不行才算失败
                 if not is_oom(e) or bs == 1:
@@ -531,19 +629,12 @@ def main():
                 free_gpu(device)
                 log(f"显存不够，改成每批 {bs} 帧重试")
                 continue
-            for k, face in enumerate(recon):
-                idx = idxs[k]
-                frame, mask, alpha = load(idx)
-                x1, y1, x2, y2 = coords[idx]
-                face = cv2.resize(np.ascontiguousarray(face).astype(np.uint8), (x2 - x1, y2 - y1))
-                out = get_image_blending(frame.copy(), face, coords[idx], mask, mask_coords[idx])
-                if bg is not None:
-                    out = (out.astype(np.float32) * alpha + bg.next().astype(np.float32) * (1 - alpha)).astype(np.uint8)
-                enc.stdin.write(np.ascontiguousarray(out).tobytes())
+            hand_over((idxs, recon))
             s += len(idxs)
-            done += len(idxs)
-            el = time.time() - t1
-            progress(0.33 + 0.65 * done / total, f"生成口型 {done}/{total} 帧 · {done / max(el, 1e-3):.1f} 帧/秒" + speed_note(device, gpu_free_gb(device)))
+    hand_over(None)
+    th.join()
+    if failed:
+        raise failed[0]
     enc.stdin.close()
     if bg is not None:
         bg.close()

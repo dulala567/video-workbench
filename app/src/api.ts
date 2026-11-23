@@ -76,6 +76,7 @@ export interface Env {
   whisper: boolean;
   whisperModel: boolean;
   whisperModelPath: string;
+  senseVoice?: boolean; // 快速识别（SenseVoice）程序和模型都在
   lipsync: { ready: boolean; python: boolean; weights: boolean; runner: boolean };
   gpu?: { nvidia: boolean; name: string; memMB: number } | null; // 只有 Windows 查
   disk: number | null;

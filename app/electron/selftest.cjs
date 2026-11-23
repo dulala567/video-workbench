@@ -6,7 +6,7 @@ const path = require('path');
 const { BrowserWindow } = require('electron');
 const { paths } = require('./paths.cjs');
 const { ffmpeg, probe, detectHwEncoder, runProcess, filterPath } = require('./ffmpeg.cjs');
-const { transcribe, toSubtitleLines } = require('./asr.cjs');
+const { transcribe, toSubtitleLines, pickEngine } = require('./asr.cjs');
 const { burnWithLook, resolveLook, handlers } = require('./jobs.cjs');
 const { presets } = require('./ass.cjs');
 const { store } = require('./store.cjs');
@@ -110,11 +110,43 @@ async function run(checkEnv) {
 
   const sample = argAfter('--sample');
   if (sample) {
-    await step('中文语音识别', async () => {
-      const segs = await transcribe(path.resolve(sample), { signal: undefined, onProgress() {} });
+    const expectText = (segs) => {
       const text = segs.map((x) => x.text).join('');
       if (!/视频|字幕|大家好/.test(text)) throw new Error('识别结果不对：' + text);
-      return { text, lines: toSubtitleLines(segs, { maxChars: 14 }).length };
+      return text;
+    };
+    // 两种识别引擎都测：快速识别（SenseVoice，装了才有）和 whisper（退路，也是其他语言用的）
+    const base = store.getSettings();
+    const hasFast = !!(paths.sherpa() && paths.senseVoiceDir());
+    if (hasFast) {
+      await step('中文语音识别（快速识别 SenseVoice）', async () => {
+        store.saveSettings({ ...base, asr: { ...base.asr, engine: 'auto' } });
+        if (pickEngine(store.getSettings()) !== 'sensevoice') throw new Error('没有选中快速识别');
+        const segs = await transcribe(path.resolve(sample), { signal: undefined, onProgress() {} });
+        return { text: expectText(segs), lines: toSubtitleLines(segs, { maxChars: 14 }).map((l) => `${l.start.toFixed(2)}-${l.end.toFixed(2)} ${l.text}`) };
+      });
+      // 长音频要切段识别：把样例接 4 遍（72 秒），检查每一遍都识别出来、时间没错位
+      await step('长音频切段识别（72 秒）', async () => {
+        const long = path.join(out, '长 音频.wav');
+        await ffmpeg(['-stream_loop', '3', '-i', path.resolve(sample), '-ac', '1', '-ar', '16000', long]);
+        const dur = (await probe(long)).duration;
+        const segs = await transcribe(long, { signal: undefined, onProgress() {} });
+        const text = segs.map((x) => x.text).join('');
+        const hits = [...text.matchAll(/大家好/g)].length;
+        if (hits !== 4) throw new Error(`应识别出 4 遍，实际 ${hits} 遍：` + text);
+        for (let i = 1; i < segs.length; i++) if (segs[i].start + 0.01 < segs[i - 1].start) throw new Error('时间顺序乱了');
+        const starts = segs.filter((x, i) => x.text === '大' && segs[i + 1]?.text === '家' && segs[i + 2]?.text === '好').map((x) => +x.start.toFixed(2));
+        const last = segs[segs.length - 1].end;
+        if (Math.abs(last - dur) > 2.5) throw new Error(`最后一个字在 ${last.toFixed(1)} 秒，音频长 ${dur.toFixed(1)} 秒`);
+        if (!fs.existsSync(path.join(paths.senseVoiceDir(), 'model.int8.onnx'))) throw new Error('识别后模型文件不见了');
+        return { duration: dur, pieces: segs.length, starts, lastEnd: last };
+      });
+    }
+    await step('中文语音识别（whisper）', async () => {
+      store.saveSettings({ ...store.getSettings(), asr: { ...base.asr, engine: 'whisper' } });
+      const segs = await transcribe(path.resolve(sample), { signal: undefined, onProgress() {} });
+      store.saveSettings({ ...store.getSettings(), asr: { ...base.asr, engine: 'auto' } });
+      return { text: expectText(segs), lines: toSubtitleLines(segs, { maxChars: 14 }).length };
     });
   }
 
@@ -144,6 +176,24 @@ async function run(checkEnv) {
       const png = path.join(out, '数字人.png');
       await ffmpeg(['-ss', '1.5', '-i', r.file, '-frames:v', '1', png]);
       return { file: r.file, duration: (await probe(r.file)).duration, frame: path.basename(png), maxProgress: maxP, stages };
+    });
+    // 快速模式（小型解码模型）：同一个形象再生成一条，形象分析结果走缓存
+    await step('数字人快速模式（小型解码模型）', async () => {
+      const cur = store.getSettings();
+      store.saveSettings({ ...cur, lipsync: { ...cur.lipsync, fastDecode: true } });
+      try {
+        const av = lipsync.listAvatars()[0];
+        const audio = path.join(out, '口型 音频.mp3');
+        const r = await lipsync.handler({ input: { avatarId: av.id, audio, look: { showSubs: false } } }, ctx);
+        const log = fs.readFileSync(r.raw.replace(/\.mp4$/, '.log'), 'utf8');
+        if (!log.includes('快速模式：用小型解码模型')) throw new Error('没用上快速模式：' + log.slice(-600));
+        const png = path.join(out, '数字人_快速模式.png');
+        await ffmpeg(['-ss', '1.5', '-i', r.file, '-frames:v', '1', png]);
+        return { duration: (await probe(r.file)).duration, frame: path.basename(png), log: log.split(/\r?\n/).filter((l) => /每批|完成：|设备|显卡/.test(l)) };
+      } finally {
+        const now = store.getSettings();
+        store.saveSettings({ ...now, lipsync: { ...now.lipsync, fastDecode: false } });
+      }
     });
   }
 
