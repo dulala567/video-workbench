@@ -107,9 +107,10 @@ GitHub 私有仓库 `dulala567/video-workbench` 的 Actions（`.github/workflows
   - 快速模式（TAESD 解码）：736×1308 照片形象 250 帧，18.6 秒 → 6.6 秒（约 38 帧/秒）。画质：动漫风格测试图上嘴唇边缘明显变软；真人素材没对比过，所以默认关闭。
   - 快速识别：18 秒中文语音，SenseVoice 0.17 秒（CPU 4 线程），whisper large-v3-turbo 1.1 秒（Mac 显卡）；同一段语音 SenseVoice 全对，whisper 把「烧录」识别成「稍录」；混入背景音乐后两者结果不变。只测了这一段合成语音，真人录音的准确率没系统比过。
   - CPU 编码 20 秒 1080×1920：medium 1.33 秒，veryfast 0.72 秒（测试画面是合成图案，真实视频的差距可能不同）。
-  - 以上都是 Mac 上的数字；NVIDIA 显卡上的数字人速度没实测。
-- Windows 版（含数字人）ZIP 约 7.8GB，其中数字人引擎约 8.8GB（解压后），显卡版 PyTorch 约 4.9GB。云电脑（4 核、无显卡）上用 CPU 跑 3 秒照片对口型 + 换背景用了 18.5 分钟（含加载模型和首次分析形象），能出片但没有实用价值，真实使用要靠 NVIDIA 显卡；显卡上的速度没实测。
-- Windows 版只在 GitHub 的 Windows Server 云电脑上自检过，没在真实的 Windows 10/11 个人电脑上跑过；NVIDIA/Intel/AMD 硬件编码因为云电脑没有显卡，都没实测（检测失败会自动退回 CPU 编码）。云电脑上 18 秒中文语音识别用了 40 秒（4 核 CPU）。
+  - Windows 云电脑（2 个 CPU 线程、无显卡）：18 秒语音 SenseVoice 5.1 秒、whisper 57 秒；72 秒音频 SenseVoice 10 秒。识别线程数原来固定 8，超过 CPU 线程数时互相抢占（同一段 12.8 秒 → 5.1 秒），现在不超过本机线程数。
+  - 以上数字人的数字都是 Mac 上的；NVIDIA 显卡上的数字人速度没实测。
+- Windows 版（含数字人）ZIP 约 7.8GB，其中数字人引擎约 8.8GB（解压后），显卡版 PyTorch 约 4.9GB。云电脑（2 个 CPU 线程、无显卡）上用 CPU 跑 3 秒照片对口型 + 换背景用了 18.5 分钟（含加载模型和首次分析形象），能出片但没有实用价值，真实使用要靠 NVIDIA 显卡；显卡上的速度没实测。
+- Windows 版只在 GitHub 的 Windows Server 云电脑上自检过，没在真实的 Windows 10/11 个人电脑上跑过；NVIDIA/Intel/AMD 硬件编码因为云电脑没有显卡，都没实测（检测失败会自动退回 CPU 编码）。云电脑只有 2 个 CPU 线程（之前写成 4 核是错的）：18 秒中文语音 whisper 要 57 秒，快速识别（SenseVoice）5.1 秒；72 秒音频快速识别 10 秒。
 - Windows 版没有微软代码签名，第一次打开会弹「Windows 已保护你的电脑」，要点「更多信息 → 仍要运行」。
 
 - 豆包这个 API Key 目前只开通了**语音合成 2.0**（和声音复刻 2.0 的资源）。语音识别（录音文件识别标准版/极速版）都返回「requested resource not granted」，所以字幕识别仍用本机 whisper。在火山控制台开通「豆包录音文件识别」后可以再接上，中文识别会比 whisper 更准。
