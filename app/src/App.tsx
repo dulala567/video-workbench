@@ -137,7 +137,7 @@ export default function App() {
           </>
         )}
         <span className="grow" />
-        <span>v0.1.0</span>
+        <span>v{__APP_VERSION__}</span>
       </footer>
       {showSettings && <Settings onClose={() => setShowSettings(false)} />}
       <ToastHost />

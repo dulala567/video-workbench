@@ -1,0 +1,88 @@
+# 把「Windows 打包」某次运行产出的完整包和补丁，挂到 GitHub Releases 供人下载（下载链接长期有效，不像运行产物 30 天过期）。
+# 完整包超过 GitHub 单文件 2GB 的上限，这里拆成几份 .zip.001 / .002……，用 7-Zip 打开第一份即可解压。
+name: 发布下载
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 「Windows 打包」运行的编号（运行页网址里 runs/ 后面的数字）
+        required: true
+      version:
+        description: 版本号，不带 v，例如 0.1.2
+        required: true
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      VER: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # 系统盘空间不够放 8GB 包再加拆分后的 8GB，放到 /mnt
+      - name: 准备工作目录
+        run: |
+          sudo mkdir -p /mnt/rel && sudo chown "$USER" /mnt/rel
+          df -h /mnt
+
+      - name: 取完整包
+        uses: actions/download-artifact@v4
+        with:
+          name: VideoWorkbench-Windows-x64-v${{ inputs.version }}
+          path: /mnt/rel
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: 取升级补丁
+        uses: actions/download-artifact@v4
+        with:
+          name: VideoWorkbench-patch-v${{ inputs.version }}
+          path: /mnt/rel
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: 拆分完整包并算校验值
+        working-directory: /mnt/rel
+        run: |
+          full="VideoWorkbench-Windows-x64-v$VER.zip"
+          patch="VideoWorkbench-patch-v$VER.zip"
+          ls -l
+          unzip -tq "$full"
+          unzip -tq "$patch"
+          echo "FULL_BYTES=$(stat -c %s "$full")" >> "$GITHUB_ENV"
+          echo "PATCH_BYTES=$(stat -c %s "$patch")" >> "$GITHUB_ENV"
+          split -b 1900M -d -a 3 --numeric-suffixes=1 "$full" "$full."
+          rm "$full"
+          sha256sum "$full".* "$patch" > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          echo "PARTS=$(ls "$full".* | wc -l)" >> "$GITHUB_ENV"
+
+      - name: 写说明
+        run: |
+          size=$(awk "BEGIN{printf \"%.1f\", $FULL_BYTES/1e9}")
+          patch=$(awk "BEGIN{printf \"%.0f\", $PATCH_BYTES/1e6}")
+          sed -e "s/__VER__/$VER/g" -e "s/__PARTS__/$PARTS/g" -e "s/__SIZE__/$size/g" -e "s/__PATCH__/$patch/g" \
+            app/ci/Release-Notes.md > /mnt/rel/notes.md
+          cat /mnt/rel/notes.md
+
+      - name: 发布
+        working-directory: /mnt/rel
+        run: |
+          tag="v$VER"
+          # 标签打在当初打包用的那次提交上
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/${{ inputs.run_id }}" --jq .head_sha)
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --notes-file notes.md
+            gh release upload "$tag" VideoWorkbench-* SHA256SUMS.txt --clobber
+          else
+            gh release create "$tag" VideoWorkbench-* SHA256SUMS.txt \
+              --target "$sha" --title "视频工作台 Windows 版 $tag" --notes-file notes.md --latest
+          fi
+          gh release view "$tag" --json assets --jq '.assets[] | "\(.name)\t\(.size)"'
