@@ -1,5 +1,8 @@
 # 把「Windows 打包」某次运行产出的完整包和补丁，挂到 GitHub Releases 供人下载（下载链接长期有效，不像运行产物 30 天过期）。
 # 完整包超过 GitHub 单文件 2GB 的上限，这里拆成几份 .zip.001 / .002……，用 7-Zip 打开第一份即可解压。
+# 先在本机建好发布页再运行本流程：本仓库的工作流令牌新建发布会被拒（HTTP 403，原因没查清），但往已有的发布页上传文件可以。
+#   git tag -a v0.1.3 <打包用的提交> -m "视频工作台 v0.1.3" && git push origin v0.1.3
+#   gh release create v0.1.3 --verify-tag --title "视频工作台 Windows 版 v0.1.3" --notes "上传中"
 name: 发布下载
 
 on:
@@ -76,13 +79,10 @@ jobs:
         working-directory: /mnt/rel
         run: |
           tag="v$VER"
-          # 标签打在当初打包用的那次提交上
-          sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/${{ inputs.run_id }}" --jq .head_sha)
-          if gh release view -R "$GITHUB_REPOSITORY" "$tag" >/dev/null 2>&1; then
-            gh release edit -R "$GITHUB_REPOSITORY" "$tag" --notes-file notes.md
-            gh release upload -R "$GITHUB_REPOSITORY" "$tag" VideoWorkbench-* SHA256SUMS.txt --clobber
-          else
-            gh release create -R "$GITHUB_REPOSITORY" "$tag" VideoWorkbench-* SHA256SUMS.txt \
-              --target "$sha" --title "视频工作台 Windows 版 $tag" --notes-file notes.md --latest
+          if ! gh release view -R "$GITHUB_REPOSITORY" "$tag" >/dev/null 2>&1; then
+            echo "::error::发布页 $tag 还没建。先在本机打标签并 gh release create（见本文件开头），再运行本流程。"
+            exit 1
           fi
+          gh release edit -R "$GITHUB_REPOSITORY" "$tag" --title "视频工作台 Windows 版 $tag" --notes-file notes.md
+          gh release upload -R "$GITHUB_REPOSITORY" "$tag" VideoWorkbench-* SHA256SUMS.txt --clobber
           gh release view -R "$GITHUB_REPOSITORY" "$tag" --json assets --jq '.assets[] | "\(.name)\t\(.size)"'

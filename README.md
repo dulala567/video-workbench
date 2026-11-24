@@ -34,7 +34,7 @@ cd app && npm run dev
 
 GitHub 仓库 `dulala567/video-workbench`（公开）的 Actions（`.github/workflows/windows.yml`）在 Windows 云电脑上打包：推送到 main 或在 Actions 页手动运行都会出一个 ZIP（Actions 运行页的 Artifacts 里，保留 30 天，要登录 GitHub 才能下）。
 
-- 发布给别人下载：在 Actions 页手动运行「发布下载」（`.github/workflows/release.yml`），填打包运行的编号和版本号。它把完整包按 1900MB 拆成 `.zip.001`、`.002`……（GitHub 单文件上限 2GB，用 7-Zip 打开第一份解压），连同补丁和 `SHA256SUMS.txt` 挂到 Releases，说明文字来自 `app/ci/Release-Notes.md`。Releases 的文件不过期。
+- 发布给别人下载：先在本机给打包用的提交打标签并 `gh release create` 建好发布页（工作流令牌新建发布会被拒，HTTP 403，原因没查清；上传文件不受影响），再在 Actions 页手动运行「发布下载」（`.github/workflows/release.yml`），填打包运行的编号和版本号。它把完整包按 1900MB 拆成 `.zip.001`、`.002`……（GitHub 单文件上限 2GB，用 7-Zip 打开第一份解压），连同补丁和 `SHA256SUMS.txt` 挂到 Releases，说明文字来自 `app/ci/Release-Notes.md`。Releases 的文件不过期。
 
 - 打包时下载 Windows 版 ffmpeg（gyan.dev essentials）、whisper.cpp（`b5907` 的 OpenBLAS 版）、识别模型 `ggml-large-v3-turbo-q5_0.bin`（574MB）、思源黑体（Noto Sans SC，OFL 开源），放进安装包的 `resources/bin|models|fonts`。
 - **带数字人**：打包时用 uv 装一份可搬动的 Python 3.11（python-build-standalone），装显卡版 PyTorch（`torch==2.8.0`，CUDA 12.8，含 CUDA 运行库，用户只需 NVIDIA 驱动）和 MuseTalk 依赖，删掉运行用不到的 `torch/include` 和 `.lib`；MuseTalk、RobustVideoMatting 代码固定到和 Mac 相同的提交；模型（MuseTalk 1.5、sd-vae、whisper-tiny、face-parse、人脸检测 s3fd/2DFAN4、RVM）下载后校验 SHA256，放进 `resources/engines`。人脸检测模型通过 `TORCH_HOME` 指到包内，运行时不联网。
