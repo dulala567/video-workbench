@@ -78,11 +78,11 @@ jobs:
           tag="v$VER"
           # 标签打在当初打包用的那次提交上
           sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/${{ inputs.run_id }}" --jq .head_sha)
-          if gh release view "$tag" >/dev/null 2>&1; then
-            gh release edit "$tag" --notes-file notes.md
-            gh release upload "$tag" VideoWorkbench-* SHA256SUMS.txt --clobber
+          if gh release view -R "$GITHUB_REPOSITORY" "$tag" >/dev/null 2>&1; then
+            gh release edit -R "$GITHUB_REPOSITORY" "$tag" --notes-file notes.md
+            gh release upload -R "$GITHUB_REPOSITORY" "$tag" VideoWorkbench-* SHA256SUMS.txt --clobber
           else
-            gh release create "$tag" VideoWorkbench-* SHA256SUMS.txt \
+            gh release create -R "$GITHUB_REPOSITORY" "$tag" VideoWorkbench-* SHA256SUMS.txt \
               --target "$sha" --title "视频工作台 Windows 版 $tag" --notes-file notes.md --latest
           fi
-          gh release view "$tag" --json assets --jq '.assets[] | "\(.name)\t\(.size)"'
+          gh release view -R "$GITHUB_REPOSITORY" "$tag" --json assets --jq '.assets[] | "\(.name)\t\(.size)"'
